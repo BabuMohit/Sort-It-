@@ -1,53 +1,25 @@
 // Jest setup file for Sort It! Mobile Gallery App
 
 // Mock React Native modules that aren't available in test environment
-jest.mock('react-native', () => ({
-  PixelRatio: {
-    get: jest.fn(() => 2),
-    getFontScale: jest.fn(() => 1),
-    getPixelSizeForLayoutSize: jest.fn((size) => size * 2),
-    roundToNearestPixel: jest.fn((size) => Math.round(size)),
-  },
-  Alert: {
-    alert: jest.fn()
-  },
-  Linking: {
-    canOpenURL: jest.fn(),
-    openURL: jest.fn(),
-    openSettings: jest.fn()
-  },
-  Platform: {
-    OS: 'android',
-    Version: 29
-  },
-  Dimensions: {
-    get: jest.fn(() => ({ width: 375, height: 812 })),
-    addEventListener: jest.fn(() => ({ remove: jest.fn() })),
-    removeEventListener: jest.fn(),
-  },
-  StyleSheet: {
-    create: jest.fn((styles) => styles),
-    flatten: jest.fn((style) => style),
-    hairlineWidth: 1,
-    absoluteFill: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 },
-    absoluteFillObject: { position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 },
-  },
-  Image: {
-    getSize: jest.fn((uri, success) => success(1920, 1080)),
-    resolveAssetSource: jest.fn(() => ({ uri: 'test-uri', width: 100, height: 100 })),
-    prefetch: jest.fn(() => Promise.resolve(true)),
-    abortPrefetch: jest.fn(),
-  },
-  ActivityIndicator: 'ActivityIndicator',
-  FlatList: 'FlatList',
-  ScrollView: 'ScrollView',
-  View: 'View',
-  Text: 'Text',
-  TouchableOpacity: 'TouchableOpacity',
-  RefreshControl: 'RefreshControl',
-  SafeAreaView: 'SafeAreaView',
-  StatusBar: 'StatusBar',
-}));
+jest.mock('react-native', () => {
+  const RN = jest.requireActual('react-native');
+  
+  return {
+    ...RN,
+    Alert: {
+      alert: jest.fn()
+    },
+    Linking: {
+      canOpenURL: jest.fn(),
+      openURL: jest.fn(),
+      openSettings: jest.fn()
+    },
+    Platform: {
+      OS: 'android',
+      Version: 29
+    }
+  };
+});
 
 // Mock Expo modules
 jest.mock('expo-media-library', () => ({

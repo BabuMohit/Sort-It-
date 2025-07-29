@@ -1,13 +1,17 @@
-// Component exports for mobile app
-export { MobileGalleryGrid } from './MobileGalleryGrid';
-export { MobilePhotoViewer } from './MobilePhotoViewer';
-export { PhotoErrorBoundary } from './PhotoErrorBoundary';
-export { SwipeIndicator } from './SwipeIndicator';
-export { SwipeUndoBar } from './SwipeUndoBar';
-export { PermissionOnboardingFlow } from './PermissionOnboardingFlow';
-export { PermissionDeniedFallback } from './PermissionDeniedFallback';
-export { PermissionStatusIndicator } from './PermissionStatusIndicator';
-export { PermissionRequestScreen } from './PermissionRequestScreen';
+// Permission-related components for Sort It! Mobile Gallery App
 
-// Export component types
-export type { MobileGalleryGridProps } from './MobileGalleryGrid';
+export { PermissionRequestScreen } from './PermissionRequestScreen';
+export { PermissionStatusIndicator, PermissionStatusBadge } from './PermissionStatusIndicator';
+export { PermissionDeniedFallback } from './PermissionDeniedFallback';
+export { PermissionOnboardingFlow } from './PermissionOnboardingFlow';
+
+// Component types for convenience
+export type {
+  PermissionRequestScreenProps,
+  PermissionStatusIndicatorProps,
+  PermissionDeniedFallbackProps,
+  PermissionOnboardingFlowProps
+} from './types';
+
+// Note: Component prop types are defined inline in each component file
+// This export is for future type definitions if needed

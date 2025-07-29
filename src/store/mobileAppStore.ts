@@ -203,32 +203,21 @@ export const useMobileAppStore = create<MobileAppStore>()(
 
         // Photo operations
         loadPhotos: async () => {
-          console.log('MobileAppStore: Starting loadPhotos...');
           set({ loading: true, error: null });
           try {
-            console.log('MobileAppStore: Calling androidPhotoService.getAllPhotos()...');
             const photos = await androidPhotoService.getAllPhotos();
-            console.log(`MobileAppStore: Received ${photos.length} photos from service`);
-            
-            if (photos.length === 0) {
-              console.warn('MobileAppStore: No photos returned from service');
-            }
-            
             set({ photos, loading: false });
-            console.log('MobileAppStore: Photos loaded successfully');
           } catch (error) {
-            console.error('MobileAppStore: Error loading photos:', error);
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+            console.error('Error loading photos:', error);
             set({ 
               error: {
                 type: 'MEDIA_STORE_ERROR' as any,
-                message: `Failed to load photos: ${errorMessage}`,
+                message: 'Failed to load photos',
                 details: error,
                 recoverable: true,
                 userAction: 'Try refreshing the photo library'
               },
-              loading: false,
-              photos: [] // Clear photos on error
+              loading: false 
             });
           }
         },

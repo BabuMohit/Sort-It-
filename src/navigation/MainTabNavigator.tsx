@@ -2,7 +2,6 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Text, View, StyleSheet } from 'react-native';
 import { MainTabParamList } from './types';
-import { MaterialColors, MaterialComponents, TouchTargets } from '../theme/materialDesign';
 import { GalleryStackNavigator } from './GalleryStackNavigator';
 import { AlbumsStackNavigator } from './AlbumsStackNavigator';
 import { SettingsStackNavigator } from './SettingsStackNavigator';
@@ -27,16 +26,15 @@ export const MainTabNavigator: React.FC = () => {
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: MaterialColors.primary,
-        tabBarInactiveTintColor: MaterialColors.onSurfaceVariant,
+        tabBarActiveTintColor: '#007AFF',
+        tabBarInactiveTintColor: '#8E8E93',
         tabBarStyle: {
-          backgroundColor: MaterialColors.surface,
+          backgroundColor: '#ffffff',
           borderTopWidth: 1,
-          borderTopColor: MaterialColors.outline,
+          borderTopColor: '#e0e0e0',
           paddingTop: 8,
           paddingBottom: 8,
-          height: MaterialComponents.navigationBar.height,
-          elevation: MaterialComponents.card.elevation,
+          height: 84,
         },
         tabBarLabelStyle: {
           fontSize: 12,
@@ -45,7 +43,6 @@ export const MainTabNavigator: React.FC = () => {
         },
         tabBarItemStyle: {
           paddingVertical: 4,
-          minHeight: TouchTargets.minimum,
         },
       }}
     >

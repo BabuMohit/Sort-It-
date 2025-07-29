@@ -32,6 +32,7 @@ export const SettingsStackNavigator: React.FC = () => {
         options={{
           title: 'Swipe Configuration',
           headerShown: true,
+          headerBackTitleVisible: false,
         }}
       />
       
@@ -41,6 +42,7 @@ export const SettingsStackNavigator: React.FC = () => {
         options={{
           title: 'Storage Management',
           headerShown: true,
+          headerBackTitleVisible: false,
         }}
       />
       
@@ -50,6 +52,7 @@ export const SettingsStackNavigator: React.FC = () => {
         options={{
           title: 'About',
           headerShown: true,
+          headerBackTitleVisible: false,
         }}
       />
     </Stack.Navigator>

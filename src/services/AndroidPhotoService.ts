@@ -28,120 +28,48 @@ export class AndroidPhotoServiceImpl implements AndroidPhotoService {
    * Includes both images and videos with comprehensive metadata
    */
   async getAllPhotos(): Promise<Photo[]> {
-    console.log('AndroidPhotoService: Starting getAllPhotos()');
-    
+    // Check cache first
+    if (this.isCacheValid() && this.photoCache.size > 0) {
+      return Array.from(this.photoCache.values());
+    }
+
+    // Request permissions first
+    const { status } = await MediaLibrary.requestPermissionsAsync();
+    if (status !== 'granted') {
+      throw this.createError(
+        'Media library permission denied',
+        MobileErrorType.PERMISSION_DENIED,
+        'Please grant photo access in Settings'
+      );
+    }
+
     try {
-      // Check and request permissions
-      console.log('AndroidPhotoService: Checking permissions...');
-      const { status } = await MediaLibrary.requestPermissionsAsync();
-      console.log(`AndroidPhotoService: Permission status: ${status}`);
-      
-      if (status !== 'granted') {
-        console.error('AndroidPhotoService: Media library permission denied');
-        throw this.createError(
-          'Media library permission denied',
-          MobileErrorType.PERMISSION_DENIED,
-          'Please grant photo access in Settings'
-        );
-      }
 
-      console.log('AndroidPhotoService: Permissions granted, testing simple fetch...');
+      // Fetch photos and videos
+      const [photoAssets, videoAssets] = await Promise.all([
+        this.fetchMediaAssets('photo'),
+        this.fetchMediaAssets('video')
+      ]);
 
-      // Try a simple fetch first to test
-      try {
-        const testResult = await MediaLibrary.getAssetsAsync({
-          first: 10,
-          mediaType: ['photo', 'video']
-        });
-        console.log(`AndroidPhotoService: Test fetch returned ${testResult.assets.length} assets`);
-        console.log('AndroidPhotoService: First asset:', testResult.assets[0]);
-      } catch (testError) {
-        console.error('AndroidPhotoService: Test fetch failed:', testError);
-        throw testError;
-      }
-
-      // Fetch all media assets
-      console.log('AndroidPhotoService: Fetching all media assets...');
-      const allAssets: MediaLibrary.Asset[] = [];
-      let hasNextPage = true;
-      let endCursor: string | undefined;
-      let pageCount = 0;
-
-      while (hasNextPage && pageCount < 50) { // Reduced safety limit
-        pageCount++;
-        console.log(`AndroidPhotoService: Fetching page ${pageCount}...`);
-        
-        try {
-          const result = await MediaLibrary.getAssetsAsync({
-            first: 50, // Smaller page size
-            mediaType: ['photo', 'video'],
-            sortBy: ['creationTime'],
-            after: endCursor
-          });
-
-          console.log(`AndroidPhotoService: Page ${pageCount} returned ${result.assets.length} assets, hasNextPage: ${result.hasNextPage}`);
-          
-          if (result.assets.length > 0) {
-            allAssets.push(...result.assets);
-          }
-          
-          hasNextPage = result.hasNextPage;
-          endCursor = result.endCursor;
-          
-          // Break if no more pages
-          if (!result.hasNextPage) {
-            break;
-          }
-        } catch (pageError) {
-          console.error(`AndroidPhotoService: Error fetching page ${pageCount}:`, pageError);
-          break;
-        }
-      }
-
-      console.log(`AndroidPhotoService: Total assets fetched: ${allAssets.length}`);
-
-      if (allAssets.length === 0) {
-        console.log('AndroidPhotoService: No assets found, returning empty array');
-        return [];
-      }
-
-      // Convert assets to photos - process first 100 for testing
+      const allAssets = [...photoAssets, ...videoAssets];
       const photos: Photo[] = [];
-      const assetsToProcess = allAssets.slice(0, 100); // Limit for testing
-      
-      console.log(`AndroidPhotoService: Processing first ${assetsToProcess.length} assets...`);
-      
-      for (let i = 0; i < assetsToProcess.length; i++) {
-        const asset = assetsToProcess[i];
-        try {
-          const photo = await this.convertAssetToPhotoSimple(asset);
-          if (photo) {
-            photos.push(photo);
-          }
-        } catch (error) {
-          console.warn(`AndroidPhotoService: Failed to convert asset ${asset.id}:`, error);
-        }
-        
-        // Log progress every 10 items
-        if ((i + 1) % 10 === 0) {
-          console.log(`AndroidPhotoService: Processed ${i + 1}/${assetsToProcess.length} assets, ${photos.length} photos created`);
-        }
-      }
 
-      console.log(`AndroidPhotoService: Successfully processed ${photos.length} photos out of ${assetsToProcess.length} assets`);
+      // Process assets in batches to avoid memory issues
+      const batchSize = 50;
+      for (let i = 0; i < allAssets.length; i += batchSize) {
+        const batch = allAssets.slice(i, i + batchSize);
+        const batchPhotos = await Promise.all(
+          batch.map(asset => this.convertAssetToPhoto(asset))
+        );
+        photos.push(...batchPhotos.filter(photo => photo !== null) as Photo[]);
+      }
 
       // Update cache
       this.updatePhotoCache(photos);
 
       return photos;
     } catch (error) {
-      console.error('AndroidPhotoService: Error getting all photos:', error);
-      
-      // If it's a permission error, re-throw it
-      if (error && typeof error === 'object' && 'type' in error && error.type === MobileErrorType.PERMISSION_DENIED) {
-        throw error;
-      }
-      
+      console.error('Error getting all photos:', error);
       throw this.createError(
         'Failed to load photos',
         MobileErrorType.MEDIA_STORE_ERROR,
@@ -178,18 +106,10 @@ export class AndroidPhotoServiceImpl implements AndroidPhotoService {
       const albums: Album[] = [];
       const storageInfo = await this.getStorageInfo();
 
-      // Process each album and get its asset count
+      // Process each album
       for (const mediaAlbum of mediaAlbums) {
         try {
-          // Get assets for this album to get accurate count
-          const albumAssets = await MediaLibrary.getAssetsAsync({
-            album: mediaAlbum,
-            first: 1, // Just get count, not all assets
-          });
-          
           const album = await this.convertMediaAlbumToAlbum(mediaAlbum, storageInfo);
-          // Update asset count with actual count
-          album.assetCount = albumAssets.totalCount;
           albums.push(album);
         } catch (error) {
           console.warn(`Failed to process album ${mediaAlbum.title}:`, error);
@@ -559,101 +479,6 @@ export class AndroidPhotoServiceImpl implements AndroidPhotoService {
   }
 
   /**
-   * Get photos for a specific album
-   */
-  async getAlbumPhotos(albumId: string): Promise<Photo[]> {
-    try {
-      console.log(`AndroidPhotoService: Getting photos for album ${albumId}`);
-      
-      // Extract the original album ID (remove 'album_' prefix)
-      const originalAlbumId = albumId.replace('album_', '');
-      
-      // Get the album from MediaLibrary
-      const mediaAlbums = await MediaLibrary.getAlbumsAsync({
-        includeSmartAlbums: true
-      });
-      
-      const targetAlbum = mediaAlbums.find(album => album.id === originalAlbumId);
-      if (!targetAlbum) {
-        console.warn(`AndroidPhotoService: Album ${albumId} not found`);
-        return [];
-      }
-      
-      // Get assets for this specific album
-      const albumAssets = await MediaLibrary.getAssetsAsync({
-        album: targetAlbum,
-        first: 1000, // Get up to 1000 photos from album
-        mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
-        sortBy: MediaLibrary.SortBy.creationTime,
-      });
-      
-      console.log(`AndroidPhotoService: Found ${albumAssets.assets.length} assets in album ${targetAlbum.title}`);
-      
-      // Convert assets to photos with proper albumId
-      const photos: Photo[] = [];
-      for (const asset of albumAssets.assets) {
-        try {
-          const photo = await this.convertAssetToPhotoWithAlbum(asset, albumId);
-          if (photo) {
-            photos.push(photo);
-          }
-        } catch (error) {
-          console.warn(`AndroidPhotoService: Failed to convert asset ${asset.id}:`, error);
-        }
-      }
-      
-      console.log(`AndroidPhotoService: Successfully converted ${photos.length} photos for album ${albumId}`);
-      return photos;
-      
-    } catch (error) {
-      console.error(`AndroidPhotoService: Error getting album photos for ${albumId}:`, error);
-      return [];
-    }
-  }
-
-  /**
-   * Convert asset to photo with specific album ID
-   */
-  private async convertAssetToPhotoWithAlbum(asset: MediaLibrary.Asset, albumId: string): Promise<Photo | null> {
-    try {
-      // Basic validation
-      if (!asset || !asset.id || !asset.uri) {
-        return null;
-      }
-
-      // Determine media type safely
-      const mediaType = asset.mediaType === 'unknown' ? 'photo' : asset.mediaType as 'photo' | 'video';
-      
-      const photo: Photo = {
-        id: `photo_${asset.id}`,
-        uri: asset.uri,
-        filename: asset.filename || `unknown_${asset.id}`,
-        width: asset.width || 0,
-        height: asset.height || 0,
-        creationTime: asset.creationTime || Date.now(),
-        modificationTime: asset.modificationTime || Date.now(),
-        mediaType,
-        albumId: albumId, // Set the correct album ID
-        location: undefined,
-        thumbnailUri: asset.uri,
-        size: 0,
-        mimeType: this.getMimeType(asset.filename || '', mediaType),
-        orientation: 0,
-        isFromCamera: false,
-        androidMediaStoreId: asset.id,
-        metadata: undefined,
-        sourceInfo: undefined,
-        exifData: undefined
-      };
-
-      return photo;
-    } catch (error) {
-      console.warn(`AndroidPhotoService: Failed to convert asset ${asset?.id || 'unknown'}:`, error);
-      return null;
-    }
-  }
-
-  /**
    * Get storage information for internal and SD card storage
    * Provides comprehensive storage analytics
    */
@@ -706,170 +531,58 @@ export class AndroidPhotoServiceImpl implements AndroidPhotoService {
   // Private helper methods
 
   private async fetchMediaAssets(mediaType: 'photo' | 'video'): Promise<MediaLibrary.Asset[]> {
-    console.log(`AndroidPhotoService: Fetching ${mediaType} assets...`);
     const assets: MediaLibrary.Asset[] = [];
     let hasNextPage = true;
     let endCursor: string | undefined;
-    let pageCount = 0;
-    const maxPages = 50; // Reasonable limit to prevent infinite loops
 
-    try {
-      while (hasNextPage && pageCount < maxPages) {
-        pageCount++;
-        console.log(`AndroidPhotoService: Fetching ${mediaType} page ${pageCount}...`);
-        
-        try {
-          const result = await MediaLibrary.getAssetsAsync({
-            first: 50, // Smaller batch size for better performance
-            mediaType,
-            sortBy: ['creationTime'],
-            after: endCursor
-          });
+    while (hasNextPage) {
+      const result = await MediaLibrary.getAssetsAsync({
+        first: 100, // Fetch in batches
+        mediaType,
+        sortBy: ['creationTime'],
+        after: endCursor
+      });
 
-          console.log(`AndroidPhotoService: Page ${pageCount} returned ${result.assets.length} ${mediaType} assets`);
-          
-          if (result.assets.length > 0) {
-            assets.push(...result.assets);
-          }
-          
-          hasNextPage = result.hasNextPage;
-          endCursor = result.endCursor;
-          
-          // If we got no assets and there's supposedly a next page, something might be wrong
-          if (result.assets.length === 0 && result.hasNextPage) {
-            console.warn(`AndroidPhotoService: Got 0 assets but hasNextPage is true for ${mediaType} page ${pageCount}`);
-            break;
-          }
-        } catch (pageError) {
-          console.error(`AndroidPhotoService: Error fetching ${mediaType} page ${pageCount}:`, pageError);
-          // Break on page error to avoid infinite loops
-          break;
-        }
-      }
-
-      if (pageCount >= maxPages) {
-        console.warn(`AndroidPhotoService: Reached maximum page limit (${maxPages}) for ${mediaType} assets`);
-      }
-
-      console.log(`AndroidPhotoService: Total ${mediaType} assets fetched: ${assets.length} (${pageCount} pages)`);
-      return assets;
-    } catch (error) {
-      console.error(`AndroidPhotoService: Error fetching ${mediaType} assets:`, error);
-      return []; // Return empty array instead of throwing
+      assets.push(...result.assets);
+      hasNextPage = result.hasNextPage;
+      endCursor = result.endCursor;
     }
+
+    return assets;
   }
 
   private async convertAssetToPhoto(asset: MediaLibrary.Asset): Promise<Photo | null> {
     try {
-      // Basic validation
-      if (!asset || !asset.id || !asset.uri) {
-        console.warn(`AndroidPhotoService: Invalid asset data:`, asset);
-        return null;
-      }
-
-      console.log(`AndroidPhotoService: Converting asset ${asset.id} (${asset.filename})`);
-      
-      // Get detailed asset info with error handling
-      let assetInfo: MediaLibrary.AssetInfo;
-      try {
-        assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
-      } catch (infoError) {
-        console.warn(`AndroidPhotoService: Failed to get asset info for ${asset.id}, using basic data:`, infoError);
-        // Create minimal asset info
-        assetInfo = {
-          ...asset,
-          localUri: asset.uri,
-          location: undefined,
-          exif: {},
-          orientation: 0,
-          duration: 0
-        } as MediaLibrary.AssetInfo;
-      }
-      
-      // Determine media type safely
-      const mediaType = asset.mediaType === 'unknown' ? 'photo' : asset.mediaType as 'photo' | 'video';
-      
-      // Get file size safely
-      let fileSize = 0;
-      try {
-        if (assetInfo.localUri) {
-          fileSize = await this.getFileSize(assetInfo.localUri);
-        }
-      } catch (sizeError) {
-        console.warn(`AndroidPhotoService: Failed to get file size for ${asset.id}:`, sizeError);
-      }
+      const assetInfo = await MediaLibrary.getAssetInfoAsync(asset.id);
       
       const photo: Photo = {
         id: `photo_${asset.id}`,
         uri: asset.uri,
-        filename: asset.filename || `unknown_${asset.id}`,
-        width: asset.width || 0,
-        height: asset.height || 0,
-        creationTime: asset.creationTime || Date.now(),
-        modificationTime: asset.modificationTime || Date.now(),
-        mediaType,
+        filename: asset.filename,
+        width: asset.width,
+        height: asset.height,
+        creationTime: asset.creationTime,
+        modificationTime: asset.modificationTime,
+        mediaType: asset.mediaType === 'unknown' ? 'photo' : asset.mediaType as 'photo' | 'video',
         albumId: asset.albumId || undefined,
         location: assetInfo.location ? {
           latitude: assetInfo.location.latitude,
           longitude: assetInfo.location.longitude
         } : undefined,
         thumbnailUri: asset.uri, // Expo provides optimized thumbnails
-        size: fileSize,
-        mimeType: this.getMimeType(asset.filename || '', mediaType),
+        size: assetInfo.localUri ? await this.getFileSize(assetInfo.localUri) : 0,
+        mimeType: this.getMimeType(asset.filename, asset.mediaType === 'unknown' ? 'photo' : asset.mediaType as 'photo' | 'video'),
         orientation: assetInfo.orientation || 0,
-        isFromCamera: this.isFromCamera(asset.filename || '', assetInfo.localUri),
+        isFromCamera: this.isFromCamera(asset.filename, assetInfo.localUri),
         androidMediaStoreId: asset.id,
         metadata: undefined, // Will be loaded on demand
-        sourceInfo: this.detectSourceInfo(asset.filename || '', assetInfo.localUri),
+        sourceInfo: this.detectSourceInfo(asset.filename, assetInfo.localUri),
         exifData: undefined // Will be loaded on demand
       };
 
-      console.log(`AndroidPhotoService: Successfully converted asset ${asset.id}`);
       return photo;
     } catch (error) {
-      console.warn(`AndroidPhotoService: Failed to convert asset ${asset?.id || 'unknown'} (${asset?.filename || 'unknown'}):`, error);
-      return null;
-    }
-  }
-
-  /**
-   * Simplified asset conversion for better reliability
-   */
-  private async convertAssetToPhotoSimple(asset: MediaLibrary.Asset): Promise<Photo | null> {
-    try {
-      // Basic validation
-      if (!asset || !asset.id || !asset.uri) {
-        return null;
-      }
-
-      // Determine media type safely
-      const mediaType = asset.mediaType === 'unknown' ? 'photo' : asset.mediaType as 'photo' | 'video';
-      
-      const photo: Photo = {
-        id: `photo_${asset.id}`,
-        uri: asset.uri,
-        filename: asset.filename || `unknown_${asset.id}`,
-        width: asset.width || 0,
-        height: asset.height || 0,
-        creationTime: asset.creationTime || Date.now(),
-        modificationTime: asset.modificationTime || Date.now(),
-        mediaType,
-        albumId: asset.albumId || undefined,
-        location: undefined, // Skip location for simplicity
-        thumbnailUri: asset.uri, // Use original URI as thumbnail
-        size: 0, // Skip file size calculation for now
-        mimeType: this.getMimeType(asset.filename || '', mediaType),
-        orientation: 0, // Default orientation
-        isFromCamera: false, // Default value
-        androidMediaStoreId: asset.id,
-        metadata: undefined,
-        sourceInfo: undefined,
-        exifData: undefined
-      };
-
-      return photo;
-    } catch (error) {
-      console.warn(`AndroidPhotoService: Failed to convert asset ${asset?.id || 'unknown'}:`, error);
+      console.warn(`Failed to convert asset ${asset.id}:`, error);
       return null;
     }
   }

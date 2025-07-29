@@ -84,6 +84,7 @@ export const AppNavigator: React.FC = () => {
           options={{
             title: 'Album Photos',
             headerShown: true,
+            headerBackTitleVisible: false,
           }}
         />
         
@@ -93,6 +94,7 @@ export const AppNavigator: React.FC = () => {
           options={{
             title: 'Swipe Configuration',
             headerShown: true,
+            headerBackTitleVisible: false,
           }}
         />
         
@@ -102,6 +104,7 @@ export const AppNavigator: React.FC = () => {
           options={{
             title: 'Storage Management',
             headerShown: true,
+            headerBackTitleVisible: false,
           }}
         />
         
