@@ -283,7 +283,7 @@ describe('PerformanceMonitorService', () => {
       performanceService.recordError(new Error('Test'));
       performanceService.recordMemoryPressure();
 
-      performanceService.resetMetrics();
+      performanceService.resetMetricsForTesting();
 
       const metrics = performanceService.getMetrics();
       expect(metrics.thumbnailLoadTime).toBe(0);

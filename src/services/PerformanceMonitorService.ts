@@ -1,5 +1,3 @@
-import { PerformanceMetrics } from '../types';
-
 export interface ScrollPerformanceMetrics {
   averageFrameRate: number;
   droppedFrames: number;
@@ -57,63 +55,25 @@ export class PerformanceMonitorService {
     this.thresholds = {
       maxFrameDrops: 5,
       maxMemoryUsageMB: 200,
-      maxThumbnailLoadTimeMs: 500,
+      maxThumbnailLoadTimeMs: 1000,
       minCacheHitRate: 0.8,
-      maxScrollLatencyMs: 16, // 60fps = 16.67ms per frame
+      maxScrollLatencyMs: 16,
     };
   }
 
-  /**
-   * Start performance monitoring
-   */
   startMonitoring(): void {
     if (this.isMonitoring) return;
     
     this.isMonitoring = true;
-    this.initializePerformanceObserver();
-    this.startFrameRateMonitoring();
-    this.startMemoryMonitoring();
+    this.resetMetrics();
   }
 
-  /**
-   * Stop performance monitoring
-   */
   stopMonitoring(): void {
-    if (!this.isMonitoring) return;
-    
     this.isMonitoring = false;
     this.performanceObserver?.disconnect();
-    this.clearBuffers();
+    this.performanceObserver = undefined;
   }
 
-  /**
-   * Record thumbnail load time
-   */
-  recordThumbnailLoadTime(startTime: number, endTime: number): void {
-    const loadTime = endTime - startTime;
-    this.metrics.thumbnailLoadTime = this.updateAverage(
-      this.metrics.thumbnailLoadTime,
-      loadTime,
-      this.metrics.totalPhotosLoaded
-    );
-    this.metrics.totalPhotosLoaded++;
-    
-    // Check threshold
-    if (loadTime > this.thresholds.maxThumbnailLoadTimeMs) {
-      this.recordPerformanceIssue('slow_thumbnail_load', { loadTime });
-    }
-  }
-
-  /**
-   * Record grid render time
-   */
-  recordGridRenderTime(renderTime: number): void {
-    this.metrics.gridRenderTime = renderTime;
-  }
-
-  /**
-   * Record scroll performance
-   */
   recordScrollPerformance(
     frameRate: number,
     droppedFrames: number,
@@ -121,6 +81,8 @@ export class PerformanceMonitorService {
     distance: number,
     itemsRendered: number
   ): void {
+    if (!this.isMonitoring) return;
+
     const scrollMetric: ScrollPerformanceMetrics = {
       averageFrameRate: frameRate,
       droppedFrames,
@@ -130,60 +92,148 @@ export class PerformanceMonitorService {
       memoryUsage: this.getCurrentMemoryUsage(),
       timestamp: Date.now(),
     };
-    
+
     this.scrollMetrics.push(scrollMetric);
-    this.metrics.scrollPerformance = this.scrollMetrics.slice(-100); // Keep last 100 entries
-    
-    // Check thresholds
-    if (droppedFrames > this.thresholds.maxFrameDrops) {
-      this.recordPerformanceIssue('frame_drops', { droppedFrames, frameRate });
+    this.metrics.scrollPerformance.push(scrollMetric);
+
+    // Keep only recent metrics
+    if (this.scrollMetrics.length > 100) {
+      this.scrollMetrics = this.scrollMetrics.slice(-50);
     }
-    
-    if (frameRate < 50) { // Below 50fps
-      this.recordPerformanceIssue('low_frame_rate', { frameRate });
+
+    this.checkPerformanceThresholds(scrollMetric);
+  }
+
+  recordThumbnailLoadTime(startTime: number, endTime?: number): void {
+    if (!this.isMonitoring) return;
+
+    const loadTime = endTime ? endTime - startTime : startTime;
+    this.metrics.thumbnailLoadTime = 
+      (this.metrics.thumbnailLoadTime + loadTime) / 2;
+    this.metrics.totalPhotosLoaded++;
+
+    if (loadTime > this.thresholds.maxThumbnailLoadTimeMs) {
+      console.warn(`Slow thumbnail load: ${loadTime}ms`);
     }
   }
 
-  /**
-   * Record cache performance
-   */
+  recordGridRenderTime(renderTime: number): void {
+    if (!this.isMonitoring) return;
+
+    this.metrics.gridRenderTime = 
+      (this.metrics.gridRenderTime + renderTime) / 2;
+  }
+
   recordCachePerformance(hitRate: number): void {
+    if (!this.isMonitoring) return;
+
     this.metrics.cacheHitRate = hitRate;
     
     if (hitRate < this.thresholds.minCacheHitRate) {
-      this.recordPerformanceIssue('low_cache_hit_rate', { hitRate });
+      console.warn(`Low cache hit rate: ${hitRate}`);
     }
   }
 
-  /**
-   * Record memory pressure event
-   */
   recordMemoryPressure(): void {
+    if (!this.isMonitoring) return;
+
     this.metrics.memoryPressureEvents++;
-    this.recordPerformanceIssue('memory_pressure', {
-      memoryUsage: this.getCurrentMemoryUsage(),
-    });
+    console.warn('Memory pressure event recorded');
   }
 
-  /**
-   * Record error
-   */
+  recordCacheHitRate(hitRate: number): void {
+    if (!this.isMonitoring) return;
+
+    this.metrics.cacheHitRate = hitRate;
+    
+    if (hitRate < this.thresholds.minCacheHitRate) {
+      console.warn(`Low cache hit rate: ${hitRate}`);
+    }
+  }
+
   recordError(error: Error, context?: any): void {
     this.metrics.errorCount++;
     console.error('Performance Monitor - Error recorded:', error, context);
   }
 
-  /**
-   * Get current performance metrics
-   */
   getMetrics(): GalleryPerformanceMetrics {
     return { ...this.metrics };
   }
 
-  /**
-   * Get performance summary
-   */
+  getAverageScrollPerformance(): ScrollPerformanceMetrics | null {
+    if (this.scrollMetrics.length === 0) return null;
+
+    const totals = this.scrollMetrics.reduce(
+      (acc, metric) => ({
+        averageFrameRate: acc.averageFrameRate + metric.averageFrameRate,
+        droppedFrames: acc.droppedFrames + metric.droppedFrames,
+        scrollDuration: acc.scrollDuration + metric.scrollDuration,
+        scrollDistance: acc.scrollDistance + metric.scrollDistance,
+        itemsRendered: acc.itemsRendered + metric.itemsRendered,
+        memoryUsage: acc.memoryUsage + metric.memoryUsage,
+        timestamp: Math.max(acc.timestamp, metric.timestamp),
+      }),
+      {
+        averageFrameRate: 0,
+        droppedFrames: 0,
+        scrollDuration: 0,
+        scrollDistance: 0,
+        itemsRendered: 0,
+        memoryUsage: 0,
+        timestamp: 0,
+      }
+    );
+
+    const count = this.scrollMetrics.length;
+    return {
+      averageFrameRate: totals.averageFrameRate / count,
+      droppedFrames: totals.droppedFrames / count,
+      scrollDuration: totals.scrollDuration / count,
+      scrollDistance: totals.scrollDistance / count,
+      itemsRendered: totals.itemsRendered / count,
+      memoryUsage: totals.memoryUsage / count,
+      timestamp: totals.timestamp,
+    };
+  }
+
+  private resetMetrics(): void {
+    this.metrics = {
+      thumbnailLoadTime: 0,
+      gridRenderTime: 0,
+      scrollPerformance: [],
+      memoryPressureEvents: 0,
+      cacheHitRate: 0,
+      averageImageLoadTime: 0,
+      totalPhotosLoaded: 0,
+      errorCount: 0,
+    };
+    this.scrollMetrics = [];
+    this.frameRateBuffer = [];
+    this.memoryUsageBuffer = [];
+  }
+
+  private getCurrentMemoryUsage(): number {
+    // In a real implementation, you would use a native module to get actual memory usage
+    return 0;
+  }
+
+  private checkPerformanceThresholds(metric: ScrollPerformanceMetrics): void {
+    if (metric.droppedFrames > this.thresholds.maxFrameDrops) {
+      console.warn(`High frame drops: ${metric.droppedFrames}`);
+    }
+
+    if (metric.memoryUsage > this.thresholds.maxMemoryUsageMB * 1024 * 1024) {
+      console.warn(`High memory usage: ${metric.memoryUsage / 1024 / 1024}MB`);
+      this.metrics.memoryPressureEvents++;
+    }
+  }
+
   getPerformanceSummary(): {
+    averageThumbnailLoadTime: number;
+    cacheHitRate: number;
+    memoryPressureEvents: number;
+    totalPhotosLoaded: number;
+    errorCount: number;
     overallScore: number;
     issues: string[];
     recommendations: string[];
@@ -195,209 +245,64 @@ export class PerformanceMonitorService {
     // Check thumbnail load time
     if (this.metrics.thumbnailLoadTime > this.thresholds.maxThumbnailLoadTimeMs) {
       issues.push('Slow thumbnail loading');
-      recommendations.push('Optimize thumbnail cache or reduce thumbnail quality');
+      recommendations.push('Consider reducing thumbnail quality or implementing progressive loading');
       score -= 20;
     }
 
     // Check cache hit rate
     if (this.metrics.cacheHitRate < this.thresholds.minCacheHitRate) {
       issues.push('Low cache hit rate');
-      recommendations.push('Increase cache size or improve preloading strategy');
+      recommendations.push('Increase cache size or improve cache strategy');
       score -= 15;
     }
 
-    // Check scroll performance
-    const recentScrollMetrics = this.scrollMetrics.slice(-10);
-    const avgFrameRate = recentScrollMetrics.reduce((sum, m) => sum + m.averageFrameRate, 0) / recentScrollMetrics.length;
-    if (avgFrameRate < 50) {
-      issues.push('Poor scroll performance');
-      recommendations.push('Reduce grid complexity or optimize image rendering');
-      score -= 25;
-    }
-
-    // Check memory usage
-    const avgMemoryUsage = this.getAverageMemoryUsage();
-    if (avgMemoryUsage > this.thresholds.maxMemoryUsageMB) {
-      issues.push('High memory usage');
-      recommendations.push('Implement more aggressive memory management');
-      score -= 20;
-    }
-
-    // Check error rate
-    const errorRate = this.metrics.errorCount / Math.max(this.metrics.totalPhotosLoaded, 1);
-    if (errorRate > 0.05) { // More than 5% error rate
-      issues.push('High error rate');
-      recommendations.push('Improve error handling and fallback mechanisms');
+    // Check memory pressure
+    if (this.metrics.memoryPressureEvents > 0) {
+      issues.push('Memory pressure detected');
+      recommendations.push('Optimize memory usage and implement better garbage collection');
       score -= 10;
     }
 
+    // Check error count
+    if (this.metrics.errorCount > 0) {
+      issues.push('Errors detected');
+      recommendations.push('Review and fix error sources');
+      score -= this.metrics.errorCount * 5;
+    }
+
     return {
+      averageThumbnailLoadTime: this.metrics.thumbnailLoadTime,
+      cacheHitRate: this.metrics.cacheHitRate,
+      memoryPressureEvents: this.metrics.memoryPressureEvents,
+      totalPhotosLoaded: this.metrics.totalPhotosLoaded,
+      errorCount: this.metrics.errorCount,
       overallScore: Math.max(0, score),
       issues,
       recommendations,
     };
   }
 
-  /**
-   * Generate performance report
-   */
   generateReport(): string {
     const summary = this.getPerformanceSummary();
-    const metrics = this.getMetrics();
+    const avgScroll = this.getAverageScrollPerformance();
     
-    return `
-Performance Report
-==================
-
-Overall Score: ${summary.overallScore}/100
-
-Metrics:
-- Average Thumbnail Load Time: ${metrics.thumbnailLoadTime.toFixed(2)}ms
-- Grid Render Time: ${metrics.gridRenderTime.toFixed(2)}ms
-- Cache Hit Rate: ${(metrics.cacheHitRate * 100).toFixed(1)}%
-- Total Photos Loaded: ${metrics.totalPhotosLoaded}
-- Memory Pressure Events: ${metrics.memoryPressureEvents}
-- Error Count: ${metrics.errorCount}
-
-Recent Scroll Performance:
-${this.scrollMetrics.slice(-5).map(m => 
-  `- ${m.averageFrameRate.toFixed(1)}fps, ${m.droppedFrames} drops, ${m.memoryUsage.toFixed(1)}MB`
-).join('\n')}
-
-Issues:
-${summary.issues.map(issue => `- ${issue}`).join('\n')}
-
-Recommendations:
-${summary.recommendations.map(rec => `- ${rec}`).join('\n')}
-    `.trim();
+    return `Performance Report:
+- Average Thumbnail Load Time: ${summary.averageThumbnailLoadTime.toFixed(2)}ms
+- Cache Hit Rate: ${(summary.cacheHitRate * 100).toFixed(1)}%
+- Memory Pressure Events: ${summary.memoryPressureEvents}
+- Total Photos Loaded: ${summary.totalPhotosLoaded}
+- Error Count: ${summary.errorCount}
+- Average Frame Rate: ${avgScroll?.averageFrameRate.toFixed(1) || 'N/A'} fps
+- Average Dropped Frames: ${avgScroll?.droppedFrames.toFixed(1) || 'N/A'}`;
   }
 
-  /**
-   * Reset all metrics
-   */
-  resetMetrics(): void {
-    this.metrics = {
-      thumbnailLoadTime: 0,
-      gridRenderTime: 0,
-      scrollPerformance: [],
-      memoryPressureEvents: 0,
-      cacheHitRate: 0,
-      averageImageLoadTime: 0,
-      totalPhotosLoaded: 0,
-      errorCount: 0,
-    };
-    
-    this.scrollMetrics = [];
-    this.clearBuffers();
-  }
-
-  /**
-   * Update performance thresholds
-   */
   updateThresholds(newThresholds: Partial<PerformanceThresholds>): void {
     this.thresholds = { ...this.thresholds, ...newThresholds };
   }
 
-  // Private methods
-
-  private initializePerformanceObserver(): void {
-    if (typeof PerformanceObserver !== 'undefined') {
-      this.performanceObserver = new PerformanceObserver((list) => {
-        const entries = list.getEntries();
-        entries.forEach(entry => {
-          if (entry.entryType === 'measure') {
-            this.processPerfEntry(entry);
-          }
-        });
-      });
-      
-      this.performanceObserver.observe({ entryTypes: ['measure'] });
-    }
-  }
-
-  private processPerfEntry(entry: PerformanceEntry): void {
-    if (entry.name.includes('thumbnail')) {
-      this.recordThumbnailLoadTime(entry.startTime, entry.startTime + entry.duration);
-    } else if (entry.name.includes('render')) {
-      this.recordGridRenderTime(entry.duration);
-    }
-  }
-
-  private startFrameRateMonitoring(): void {
-    let lastFrameTime = performance.now();
-    let frameCount = 0;
-    
-    const measureFrameRate = () => {
-      if (!this.isMonitoring) return;
-      
-      const currentTime = performance.now();
-      const deltaTime = currentTime - lastFrameTime;
-      
-      if (deltaTime >= 1000) { // Every second
-        const fps = (frameCount * 1000) / deltaTime;
-        this.frameRateBuffer.push(fps);
-        
-        if (this.frameRateBuffer.length > 60) { // Keep last 60 seconds
-          this.frameRateBuffer.shift();
-        }
-        
-        frameCount = 0;
-        lastFrameTime = currentTime;
-      }
-      
-      frameCount++;
-      requestAnimationFrame(measureFrameRate);
-    };
-    
-    requestAnimationFrame(measureFrameRate);
-  }
-
-  private startMemoryMonitoring(): void {
-    const measureMemory = () => {
-      if (!this.isMonitoring) return;
-      
-      const memoryUsage = this.getCurrentMemoryUsage();
-      this.memoryUsageBuffer.push(memoryUsage);
-      
-      if (this.memoryUsageBuffer.length > 60) { // Keep last 60 measurements
-        this.memoryUsageBuffer.shift();
-      }
-      
-      if (memoryUsage > this.thresholds.maxMemoryUsageMB) {
-        this.recordMemoryPressure();
-      }
-      
-      setTimeout(measureMemory, 1000); // Every second
-    };
-    
-    setTimeout(measureMemory, 1000);
-  }
-
-  private getCurrentMemoryUsage(): number {
-    // Simplified memory usage calculation
-    // In a real implementation, you might use performance.memory or native modules
-    if (typeof performance !== 'undefined' && (performance as any).memory) {
-      return (performance as any).memory.usedJSHeapSize / (1024 * 1024); // Convert to MB
-    }
-    return 0;
-  }
-
-  private getAverageMemoryUsage(): number {
-    if (this.memoryUsageBuffer.length === 0) return 0;
-    return this.memoryUsageBuffer.reduce((sum, usage) => sum + usage, 0) / this.memoryUsageBuffer.length;
-  }
-
-  private updateAverage(currentAvg: number, newValue: number, count: number): number {
-    return (currentAvg * count + newValue) / (count + 1);
-  }
-
-  private recordPerformanceIssue(type: string, data: any): void {
-    console.warn(`Performance Issue - ${type}:`, data);
-  }
-
-  private clearBuffers(): void {
-    this.frameRateBuffer = [];
-    this.memoryUsageBuffer = [];
+  // Make resetMetrics public for testing
+  public resetMetricsForTesting(): void {
+    this.resetMetrics();
   }
 }
 

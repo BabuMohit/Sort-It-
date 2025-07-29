@@ -144,25 +144,7 @@ export class AndroidPermissionServiceImpl implements AndroidPermissionService {
     }
   }
 
-  /**
-   * Request all required permissions at once
-   * Convenience method for the store to use
-   */
-  async requestAllPermissions(): Promise<boolean> {
-    try {
-      console.log('AndroidPermissionService: Requesting all permissions...');
-      
-      const mediaLibraryGranted = await this.requestMediaLibraryPermissions();
-      console.log('AndroidPermissionService: Media library granted:', mediaLibraryGranted);
-      
-      // For now, we only need media library permissions
-      // Storage permissions are handled through MediaStore API
-      return mediaLibraryGranted;
-    } catch (error) {
-      console.error('AndroidPermissionService: Error requesting all permissions:', error);
-      return false;
-    }
-  }
+
 
   /**
    * Open device settings for the app

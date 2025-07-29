@@ -178,10 +178,18 @@ export class AndroidPhotoServiceImpl implements AndroidPhotoService {
       const albums: Album[] = [];
       const storageInfo = await this.getStorageInfo();
 
-      // Process each album
+      // Process each album and get its asset count
       for (const mediaAlbum of mediaAlbums) {
         try {
+          // Get assets for this album to get accurate count
+          const albumAssets = await MediaLibrary.getAssetsAsync({
+            album: mediaAlbum,
+            first: 1, // Just get count, not all assets
+          });
+          
           const album = await this.convertMediaAlbumToAlbum(mediaAlbum, storageInfo);
+          // Update asset count with actual count
+          album.assetCount = albumAssets.totalCount;
           albums.push(album);
         } catch (error) {
           console.warn(`Failed to process album ${mediaAlbum.title}:`, error);
@@ -551,6 +559,101 @@ export class AndroidPhotoServiceImpl implements AndroidPhotoService {
   }
 
   /**
+   * Get photos for a specific album
+   */
+  async getAlbumPhotos(albumId: string): Promise<Photo[]> {
+    try {
+      console.log(`AndroidPhotoService: Getting photos for album ${albumId}`);
+      
+      // Extract the original album ID (remove 'album_' prefix)
+      const originalAlbumId = albumId.replace('album_', '');
+      
+      // Get the album from MediaLibrary
+      const mediaAlbums = await MediaLibrary.getAlbumsAsync({
+        includeSmartAlbums: true
+      });
+      
+      const targetAlbum = mediaAlbums.find(album => album.id === originalAlbumId);
+      if (!targetAlbum) {
+        console.warn(`AndroidPhotoService: Album ${albumId} not found`);
+        return [];
+      }
+      
+      // Get assets for this specific album
+      const albumAssets = await MediaLibrary.getAssetsAsync({
+        album: targetAlbum,
+        first: 1000, // Get up to 1000 photos from album
+        mediaType: [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video],
+        sortBy: MediaLibrary.SortBy.creationTime,
+      });
+      
+      console.log(`AndroidPhotoService: Found ${albumAssets.assets.length} assets in album ${targetAlbum.title}`);
+      
+      // Convert assets to photos with proper albumId
+      const photos: Photo[] = [];
+      for (const asset of albumAssets.assets) {
+        try {
+          const photo = await this.convertAssetToPhotoWithAlbum(asset, albumId);
+          if (photo) {
+            photos.push(photo);
+          }
+        } catch (error) {
+          console.warn(`AndroidPhotoService: Failed to convert asset ${asset.id}:`, error);
+        }
+      }
+      
+      console.log(`AndroidPhotoService: Successfully converted ${photos.length} photos for album ${albumId}`);
+      return photos;
+      
+    } catch (error) {
+      console.error(`AndroidPhotoService: Error getting album photos for ${albumId}:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Convert asset to photo with specific album ID
+   */
+  private async convertAssetToPhotoWithAlbum(asset: MediaLibrary.Asset, albumId: string): Promise<Photo | null> {
+    try {
+      // Basic validation
+      if (!asset || !asset.id || !asset.uri) {
+        return null;
+      }
+
+      // Determine media type safely
+      const mediaType = asset.mediaType === 'unknown' ? 'photo' : asset.mediaType as 'photo' | 'video';
+      
+      const photo: Photo = {
+        id: `photo_${asset.id}`,
+        uri: asset.uri,
+        filename: asset.filename || `unknown_${asset.id}`,
+        width: asset.width || 0,
+        height: asset.height || 0,
+        creationTime: asset.creationTime || Date.now(),
+        modificationTime: asset.modificationTime || Date.now(),
+        mediaType,
+        albumId: albumId, // Set the correct album ID
+        location: undefined,
+        thumbnailUri: asset.uri,
+        size: 0,
+        mimeType: this.getMimeType(asset.filename || '', mediaType),
+        orientation: 0,
+        isFromCamera: false,
+        androidMediaStoreId: asset.id,
+        metadata: undefined,
+        sourceInfo: undefined,
+        exifData: undefined
+      };
+
+      return photo;
+    } catch (error) {
+      console.warn(`AndroidPhotoService: Failed to convert asset ${asset?.id || 'unknown'}:`, error);
+      return null;
+    }
+  }
+
+  /**
    * Get storage information for internal and SD card storage
    * Provides comprehensive storage analytics
    */
@@ -674,12 +777,13 @@ export class AndroidPhotoServiceImpl implements AndroidPhotoService {
         console.warn(`AndroidPhotoService: Failed to get asset info for ${asset.id}, using basic data:`, infoError);
         // Create minimal asset info
         assetInfo = {
+          ...asset,
           localUri: asset.uri,
-          location: null,
+          location: undefined,
           exif: {},
           orientation: 0,
           duration: 0
-        };
+        } as MediaLibrary.AssetInfo;
       }
       
       // Determine media type safely

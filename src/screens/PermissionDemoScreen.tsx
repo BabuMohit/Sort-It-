@@ -11,7 +11,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import {
   PermissionRequestScreen,
   PermissionStatusIndicator,
-  PermissionStatusBadge,
   PermissionDeniedFallback,
   PermissionOnboardingFlow
 } from '../components';
@@ -110,12 +109,10 @@ export const PermissionDemoScreen: React.FC = () => {
               </View>
 
               <View style={styles.section}>
-                <Text style={styles.sectionTitle}>Status Badge</Text>
+                <Text style={styles.sectionTitle}>Status Indicator</Text>
                 <View style={styles.badgeContainer}>
-                  <PermissionStatusBadge
-                    onPress={() => Alert.alert('Badge', 'Permission badge pressed')}
-                  />
-                  <Text style={styles.badgeLabel}>Tap the badge</Text>
+                  <PermissionStatusIndicator />
+                  <Text style={styles.badgeLabel}>Permission status</Text>
                 </View>
               </View>
 
@@ -148,9 +145,7 @@ export const PermissionDemoScreen: React.FC = () => {
                     Status: {permissionStatus?.status || 'Unknown'}
                   </Text>
                 </View>
-                <PermissionStatusBadge
-                  onPress={() => Alert.alert('Status', 'Current permission status')}
-                />
+                <PermissionStatusIndicator />
               </View>
 
               <View style={styles.buttonSection}>

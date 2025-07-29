@@ -32,7 +32,6 @@ export const AlbumsStackNavigator: React.FC = () => {
         options={{
           title: 'Album Photos',
           headerShown: true,
-          headerBackTitleVisible: false,
         }}
       />
       
@@ -51,7 +50,6 @@ export const AlbumsStackNavigator: React.FC = () => {
         options={{
           title: 'Album Settings',
           headerShown: true,
-          headerBackTitleVisible: false,
         }}
       />
     </Stack.Navigator>

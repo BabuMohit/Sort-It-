@@ -28,6 +28,7 @@ export interface MobileGalleryGridProps {
   photos: Photo[];
   columns?: number;
   onPhotoSelect: (photo: Photo, index: number) => void;
+  onPhotoLongPress?: (photo: Photo, index: number) => void;
   onLoadMore?: () => void;
   onRefresh?: () => Promise<void>;
   loading?: boolean;
@@ -52,6 +53,7 @@ export const MobileGalleryGrid: React.FC<MobileGalleryGridProps> = ({
   photos,
   columns = 3,
   onPhotoSelect,
+  onPhotoLongPress,
   onLoadMore,
   onRefresh,
   loading = false,
@@ -67,6 +69,18 @@ export const MobileGalleryGrid: React.FC<MobileGalleryGridProps> = ({
   loadingComponent,
   testID = 'mobile-gallery-grid',
 }) => {
+  // Smart loading state with predictive loading
+  const [visibleRange, setVisibleRange] = useState({ start: 0, end: Math.min(50, photos.length) });
+  const [loadedPhotos, setLoadedPhotos] = useState<PhotoGridItem[]>([]);
+  const scrollDirection = useRef<'up' | 'down'>('down');
+  const lastScrollY = useRef(0);
+  const scrollVelocity = useRef(0);
+  const predictiveBuffer = useRef(20); // Dynamic buffer based on scroll velocity
+
+  // Debug logging (reduced for cleaner console)
+  if (__DEV__ && photos.length === 0) {
+    console.log('MobileGalleryGrid: No photos to display');
+  }
   const [dimensions, setDimensions] = useState({
     width: propScreenWidth || screenWidth,
     height: screenHeight,
@@ -74,7 +88,6 @@ export const MobileGalleryGrid: React.FC<MobileGalleryGridProps> = ({
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [thumbnailCache, setThumbnailCache] = useState<Map<string, string>>(new Map());
   const flatListRef = useRef<FlatList>(null);
-  const lastScrollY = useRef(0);
   const scrollStartTime = useRef(0);
   const frameDropCount = useRef(0);
   const renderStartTime = useRef(0);
@@ -104,6 +117,37 @@ export const MobileGalleryGrid: React.FC<MobileGalleryGridProps> = ({
       index,
     }));
   }, [photos]);
+
+  // Smart loading: Update loaded photos based on visible range with predictive loading
+  useEffect(() => {
+    const start = Math.max(0, visibleRange.start);
+    const end = Math.min(photos.length, visibleRange.end);
+    
+    // Add predictive buffer based on scroll direction and velocity
+    const bufferSize = Math.min(predictiveBuffer.current, 20); // Reduced buffer
+    const predictiveStart = scrollDirection.current === 'up' 
+      ? Math.max(0, start - bufferSize) 
+      : start;
+    const predictiveEnd = scrollDirection.current === 'down' 
+      ? Math.min(photos.length, end + bufferSize) 
+      : end;
+    
+    const newLoadedPhotos = gridData.slice(predictiveStart, predictiveEnd);
+    setLoadedPhotos(newLoadedPhotos);
+    
+    // Reduced logging frequency
+    if (__DEV__ && Math.random() < 0.1) { // Only log 10% of the time
+      console.log(`MobileGalleryGrid: Loading photos ${predictiveStart}-${predictiveEnd} of ${photos.length} (visible: ${start}-${end})`);
+    }
+  }, [gridData, visibleRange, photos.length]);
+
+  // Update visible range when photos change
+  useEffect(() => {
+    if (photos.length > 0) {
+      const initialEnd = Math.min(50, photos.length);
+      setVisibleRange({ start: 0, end: initialEnd });
+    }
+  }, [photos.length]);
 
   // Initialize services and handle dimension changes
   useEffect(() => {
@@ -152,20 +196,27 @@ export const MobileGalleryGrid: React.FC<MobileGalleryGridProps> = ({
       
       onSelectionChange?.(newSelection);
     } else {
-      onPhotoSelect(photo, photo.index);
+      // Find the correct index in the original photos array
+      const correctIndex = photos.findIndex(p => p.id === photo.id);
+      onPhotoSelect(photo, correctIndex >= 0 ? correctIndex : photo.index);
     }
-  }, [enableSelection, selectedPhotos, onSelectionChange, onPhotoSelect]);
+  }, [enableSelection, selectedPhotos, onSelectionChange, onPhotoSelect, photos]);
 
-  // Handle long press for selection mode
+  // Handle long press for selection mode or custom actions
   const handlePhotoLongPress = useCallback((photo: PhotoGridItem) => {
-    if (!enableSelection) return;
-    
-    const newSelection = selectedPhotos.includes(photo.id)
-      ? selectedPhotos.filter(id => id !== photo.id)
-      : [...selectedPhotos, photo.id];
-    
-    onSelectionChange?.(newSelection);
-  }, [enableSelection, selectedPhotos, onSelectionChange]);
+    if (onPhotoLongPress) {
+      // Custom long press handler takes precedence
+      const correctIndex = photos.findIndex(p => p.id === photo.id);
+      onPhotoLongPress(photo, correctIndex >= 0 ? correctIndex : photo.index);
+    } else if (enableSelection) {
+      // Default selection behavior
+      const newSelection = selectedPhotos.includes(photo.id)
+        ? selectedPhotos.filter(id => id !== photo.id)
+        : [...selectedPhotos, photo.id];
+      
+      onSelectionChange?.(newSelection);
+    }
+  }, [onPhotoLongPress, enableSelection, selectedPhotos, onSelectionChange, photos]);
 
   // Handle load more with debouncing
   const handleLoadMore = useCallback(async () => {
@@ -185,10 +236,11 @@ export const MobileGalleryGrid: React.FC<MobileGalleryGridProps> = ({
     await onRefresh();
   }, [onRefresh]);
 
-  // Enhanced scroll handler with performance monitoring
+  // Enhanced scroll handler with performance monitoring and predictive loading
   const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const currentScrollY = event.nativeEvent.contentOffset.y;
     const scrollDelta = Math.abs(currentScrollY - lastScrollY.current);
+    const newDirection = currentScrollY > lastScrollY.current ? 'down' : 'up';
     
     // Record scroll performance
     if (scrollStartTime.current > 0) {
@@ -206,8 +258,28 @@ export const MobileGalleryGrid: React.FC<MobileGalleryGridProps> = ({
       frameDropCount.current = 0;
     }
     
+    // Predictive loading based on scroll direction
+    if (newDirection !== scrollDirection.current) {
+      scrollDirection.current = newDirection;
+      
+      // Adjust buffer based on scroll direction
+      const bufferSize = 15; // Larger buffer for predictive loading
+      const currentStart = visibleRange.start;
+      const currentEnd = visibleRange.end;
+      
+      if (newDirection === 'down') {
+        // Scrolling down - preload more photos ahead
+        const newEnd = Math.min(photos.length, currentEnd + bufferSize);
+        setVisibleRange({ start: currentStart, end: newEnd });
+      } else {
+        // Scrolling up - preload more photos behind
+        const newStart = Math.max(0, currentStart - bufferSize);
+        setVisibleRange({ start: newStart, end: currentEnd });
+      }
+    }
+    
     lastScrollY.current = currentScrollY;
-  }, [dimensions.height, gridLayout.itemHeight, gridLayout.columns]);
+  }, [dimensions.height, gridLayout.itemHeight, gridLayout.columns, visibleRange, photos.length]);
 
   // Handle scroll begin for performance tracking
   const handleScrollBeginDrag = useCallback(() => {
@@ -220,40 +292,55 @@ export const MobileGalleryGrid: React.FC<MobileGalleryGridProps> = ({
     scrollStartTime.current = 0;
   }, []);
 
-  // Get optimized thumbnail URI
+  // Handle viewport changes for smart loading
+  const handleViewableItemsChanged = useCallback(({ viewableItems }: any) => {
+    if (viewableItems.length === 0) return;
+    
+    const firstVisible = viewableItems[0]?.index || 0;
+    const lastVisible = viewableItems[viewableItems.length - 1]?.index || 0;
+    
+    // Buffer size for preloading
+    const bufferSize = 10;
+    const start = Math.max(0, firstVisible - bufferSize);
+    const end = Math.min(photos.length, lastVisible + bufferSize);
+    
+    // Only update if range has changed significantly
+    if (Math.abs(start - visibleRange.start) > 5 || Math.abs(end - visibleRange.end) > 5) {
+      setVisibleRange({ start, end });
+    }
+  }, [photos.length, visibleRange]);
+
+
+
+  // Get optimized thumbnail URI - simplified to avoid Buffer issues
   const getThumbnailUri = useCallback(async (photo: Photo): Promise<string> => {
-    const cacheKey = `${photo.id}_${gridLayout.itemWidth}x${gridLayout.itemHeight}`;
-    
-    // Check memory cache first
-    if (thumbnailCache.has(cacheKey)) {
-      return thumbnailCache.get(cacheKey)!;
-    }
-    
-    try {
-      const startTime = performance.now();
-      const thumbnailUri = await thumbnailCacheService.getThumbnail(photo, {
-        width: gridLayout.itemWidth,
-        height: gridLayout.itemHeight,
-        quality: 0.8,
-        preserveAspectRatio: true,
-      });
-      const endTime = performance.now();
-      
-      // Record performance
-      performanceMonitorService.recordThumbnailLoadTime(startTime, endTime);
-      
-      // Update memory cache
-      setThumbnailCache(prev => new Map(prev).set(cacheKey, thumbnailUri));
-      
-      return thumbnailUri;
-    } catch (error) {
-      performanceMonitorService.recordError(error as Error, 'thumbnail_generation');
-      return photo.thumbnailUri || photo.uri;
-    }
-  }, [gridLayout.itemWidth, gridLayout.itemHeight, thumbnailCache]);
+    // For now, just return the original URI or thumbnail URI
+    // This avoids the Buffer error while we fix the thumbnail service
+    return photo.thumbnailUri || photo.uri;
+  }, []);
 
   // Optimized photo item component
   const PhotoItem = React.memo<{ photo: PhotoGridItem }>(({ photo }) => {
+    // Safety check for photo data
+    if (!photo || !photo.id || !photo.uri) {
+      console.warn('MobileGalleryGrid: Invalid photo data:', photo);
+      return (
+        <View style={[
+          styles.photoItem,
+          {
+            width: gridLayout.itemWidth,
+            height: gridLayout.itemHeight,
+            marginRight: itemSpacing,
+            marginBottom: itemSpacing,
+          }
+        ]}>
+          <View style={styles.errorPhotoPlaceholder}>
+            <Text style={styles.errorPhotoText}>⚠</Text>
+          </View>
+        </View>
+      );
+    }
+
     const [thumbnailUri, setThumbnailUri] = useState(photo.thumbnailUri || photo.uri);
     const [imageLoading, setImageLoading] = useState(true);
     const isSelected = enableSelection && selectedPhotos.includes(photo.id);
@@ -290,7 +377,7 @@ export const MobileGalleryGrid: React.FC<MobileGalleryGridProps> = ({
         onLongPress={() => handlePhotoLongPress(photo)}
         activeOpacity={0.8}
         testID={`photo-item-${photo.id}`}
-        accessibilityLabel={`Photo ${photo.filename}`}
+        accessibilityLabel={`Photo ${photo.filename || 'Unknown'}`}
         accessibilityRole="imagebutton"
         accessibilityState={{ selected: isSelected }}
       >
@@ -427,6 +514,11 @@ export const MobileGalleryGrid: React.FC<MobileGalleryGridProps> = ({
           ) : undefined
         }
         onScroll={handleScroll}
+        onViewableItemsChanged={handleViewableItemsChanged}
+        viewabilityConfig={{
+          itemVisiblePercentThreshold: 50,
+          minimumViewTime: 100,
+        }}
         onScrollBeginDrag={handleScrollBeginDrag}
         onScrollEndDrag={handleScrollEndDrag}
         onEndReached={handleLoadMore}
@@ -434,15 +526,15 @@ export const MobileGalleryGrid: React.FC<MobileGalleryGridProps> = ({
         ListFooterComponent={renderFooter}
         ListEmptyComponent={renderEmptyComponent}
         showsVerticalScrollIndicator={false}
-        // Performance optimizations
+        // Performance optimizations with smart loading
         removeClippedSubviews={true}
-        maxToRenderPerBatch={20}
-        windowSize={10}
-        initialNumToRender={20}
+        maxToRenderPerBatch={15} // Reduced for better performance
+        windowSize={8} // Reduced window size
+        initialNumToRender={15} // Reduced initial render
         getItemLayout={getItemLayout}
         // Accessibility
+        accessible={true}
         accessibilityLabel="Photo grid"
-        accessibilityRole="grid"
       />
     </View>
   );
@@ -485,6 +577,17 @@ const styles = StyleSheet.create({
   photoImage: {
     width: '100%',
     height: '100%',
+  },
+  errorPhotoPlaceholder: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#f0f0f0',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  errorPhotoText: {
+    fontSize: 24,
+    color: '#999999',
   },
   videoIndicator: {
     position: 'absolute',

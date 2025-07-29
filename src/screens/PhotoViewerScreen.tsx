@@ -1,24 +1,21 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View,
   StyleSheet,
   Dimensions,
-  TouchableOpacity,
-  Text,
-  StatusBar,
   Alert,
+  Text,
+  BackHandler,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { PanGestureHandler, PinchGestureHandler, State } from 'react-native-gesture-handler';
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-  useAnimatedGestureHandler,
-  withSpring,
-  runOnJS,
-} from 'react-native-reanimated';
-import { Photo } from '../types';
+import { useFocusEffect } from '@react-navigation/native';
+import { Photo, SwipeDirection, PhotoOperationResult, SwipeConfiguration, AlbumAction } from '../types';
 import { NavigationProps } from '../navigation/types';
+import { MobilePhotoViewer } from '../components/MobilePhotoViewer';
+import { SwipeUndoBar } from '../components/SwipeUndoBar';
+import { SwipeConfirmationBottomSheet } from '../components/SwipeConfirmationBottomSheet';
+import { BatchOperationProgress, BatchOperation } from '../components/BatchOperationProgress';
+import { usePhotoOperations } from '../hooks/usePhotoOperations';
+import { useMobileAppStore } from '../store/mobileAppStore';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
@@ -39,220 +36,319 @@ export const PhotoViewerScreen: React.FC<PhotoViewerScreenProps> = ({
   const { photos, currentIndex: initialIndex, albumId } = route.params;
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const [showControls, setShowControls] = useState(true);
+  const [showUndoBar, setShowUndoBar] = useState(false);
+  const [lastSwipeAction, setLastSwipeAction] = useState<SwipeDirection | null>(null);
+  const [lastOperationId, setLastOperationId] = useState<string | null>(null);
+  
+  // Confirmation dialog state
+  const [showConfirmation, setShowConfirmation] = useState(false);
+  const [pendingSwipe, setPendingSwipe] = useState<{
+    direction: SwipeDirection;
+    photo: Photo;
+    action: AlbumAction;
+  } | null>(null);
+  
+  // Batch operation state
+  const [showBatchProgress, setShowBatchProgress] = useState(false);
+  const [batchOperations, setBatchOperations] = useState<BatchOperation[]>([]);
+  const [currentBatchIndex, setCurrentBatchIndex] = useState(0);
+  const [completedBatchOps, setCompletedBatchOps] = useState(0);
+  const [failedBatchOps, setFailedBatchOps] = useState(0);
+  const batchCancelledRef = useRef(false);
+  
+  const { movePhoto, copyPhoto, deletePhoto, undoLastOperation } = usePhotoOperations();
+  const { swipeConfig, settings } = useMobileAppStore();
 
-  // Animation values
-  const scale = useSharedValue(1);
-  const translateX = useSharedValue(0);
-  const translateY = useSharedValue(0);
-  const photoTranslateX = useSharedValue(0);
+  // Handle Android back button
+  useFocusEffect(
+    useCallback(() => {
+      const onBackPress = () => {
+        if (showConfirmation) {
+          setShowConfirmation(false);
+          setPendingSwipe(null);
+          return true;
+        }
+        if (showBatchProgress && currentBatchIndex < batchOperations.length) {
+          // Show cancel confirmation for ongoing batch operations
+          Alert.alert(
+            'Cancel Operations',
+            'Are you sure you want to cancel the ongoing operations?',
+            [
+              { text: 'Continue', style: 'cancel' },
+              { 
+                text: 'Cancel', 
+                style: 'destructive',
+                onPress: () => {
+                  batchCancelledRef.current = true;
+                  setShowBatchProgress(false);
+                }
+              }
+            ]
+          );
+          return true;
+        }
+        return false;
+      };
 
-  // Refs
-  const pinchRef = useRef();
-  const panRef = useRef();
+      const subscription = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+      return () => subscription.remove();
+    }, [showConfirmation, showBatchProgress, currentBatchIndex, batchOperations.length])
+  );
 
-  const currentPhoto = photos[currentIndex];
+  // Safety check - if no photos, navigate back
+  if (!photos || photos.length === 0) {
+    React.useEffect(() => {
+      console.warn('PhotoViewerScreen: No photos available, navigating back');
+      navigation.goBack();
+    }, []);
+    
+    return (
+      <View style={styles.container}>
+        <Text style={styles.errorText}>No photos found</Text>
+      </View>
+    );
+  }
 
-  const resetTransform = () => {
-    scale.value = withSpring(1);
-    translateX.value = withSpring(0);
-    translateY.value = withSpring(0);
+  const handlePhotoChange = (index: number) => {
+    setCurrentIndex(index);
   };
 
-  const goToPrevious = () => {
-    if (currentIndex > 0) {
-      setCurrentIndex(currentIndex - 1);
-      resetTransform();
+  const handleSwipe = async (direction: SwipeDirection, photo: Photo) => {
+    try {
+      // Get the configured action for this swipe direction
+      const swipeAction = swipeConfig[direction.type as keyof SwipeConfiguration] as AlbumAction;
+      
+      if (!swipeAction || typeof swipeAction !== 'object' || !('type' in swipeAction)) {
+        Alert.alert('Error', 'No action configured for this swipe direction');
+        return;
+      }
+
+      // Show confirmation dialog for actions that require confirmation
+      if (swipeAction.confirmationRequired) {
+        setPendingSwipe({ direction, photo, action: swipeAction });
+        setShowConfirmation(true);
+        return;
+      }
+
+      // Perform action immediately if no confirmation required
+      await performSwipeAction(direction, photo, swipeAction);
+    } catch (error) {
+      console.error('Swipe action failed:', error);
+      Alert.alert('Error', 'Failed to perform action. Please try again.');
     }
   };
 
-  const goToNext = () => {
-    if (currentIndex < photos.length - 1) {
-      setCurrentIndex(currentIndex + 1);
-      resetTransform();
+  const performSwipeAction = async (direction: SwipeDirection, photo: Photo, swipeAction: AlbumAction) => {
+    let result: PhotoOperationResult | null = null;
+
+    switch (swipeAction.type) {
+      case 'move':
+        if (swipeAction.albumId) {
+          result = await movePhoto(photo.id, swipeAction.albumId);
+        }
+        break;
+      case 'copy':
+        if (swipeAction.albumId) {
+          result = await copyPhoto(photo.id, swipeAction.albumId);
+        }
+        break;
+      case 'delete':
+        result = await deletePhoto(photo.id);
+        break;
+    }
+
+    if (result && result.success) {
+      setLastOperationId(result.photoId || Date.now().toString());
+      setLastSwipeAction(direction);
+      setShowUndoBar(true);
     }
   };
 
-  const toggleControls = () => {
-    setShowControls(!showControls);
+  const handleUndo = async () => {
+    if (lastOperationId) {
+      try {
+        await undoLastOperation(lastOperationId);
+        setShowUndoBar(false);
+        setLastSwipeAction(null);
+        setLastOperationId(null);
+      } catch (error) {
+        console.error('Undo failed:', error);
+        Alert.alert('Error', 'Failed to undo action');
+      }
+    }
+  };
+
+  const handleUndoTimeout = () => {
+    setShowUndoBar(false);
+    setLastSwipeAction(null);
+    setLastOperationId(null);
   };
 
   const handleClose = () => {
     navigation.goBack();
   };
 
-  const handleShare = () => {
-    Alert.alert('Share', 'Share functionality will be implemented in a future update.');
+  const handleToggleControls = () => {
+    setShowControls(!showControls);
   };
 
-  const handleDelete = () => {
-    Alert.alert(
-      'Delete Photo',
-      'Are you sure you want to delete this photo?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            // Delete functionality will be implemented in photo operations task
-            Alert.alert('Delete', 'Delete functionality will be implemented in a future update.');
-          },
-        },
-      ]
-    );
+  const handleConfirmSwipe = async () => {
+    if (!pendingSwipe) return;
+    
+    setShowConfirmation(false);
+    const { direction, photo, action } = pendingSwipe;
+    setPendingSwipe(null);
+    
+    await performSwipeAction(direction, photo, action);
   };
 
-  // Pinch gesture handler
-  const pinchGestureHandler = useAnimatedGestureHandler({
-    onStart: () => {
-      runOnJS(setShowControls)(false);
-    },
-    onActive: (event) => {
-      scale.value = Math.max(0.5, Math.min(event.scale, 3));
-    },
-    onEnd: () => {
-      if (scale.value < 1) {
-        scale.value = withSpring(1);
-      } else if (scale.value > 2.5) {
-        scale.value = withSpring(2.5);
-      }
-      runOnJS(setShowControls)(true);
-    },
-  });
+  const handleCancelSwipe = () => {
+    setShowConfirmation(false);
+    setPendingSwipe(null);
+  };
 
-  // Pan gesture handler
-  const panGestureHandler = useAnimatedGestureHandler({
-    onStart: () => {
-      runOnJS(setShowControls)(false);
-    },
-    onActive: (event) => {
-      if (scale.value > 1) {
-        // Pan when zoomed in
-        translateX.value = event.translationX;
-        translateY.value = event.translationY;
-      } else {
-        // Horizontal swipe for navigation
-        photoTranslateX.value = event.translationX;
+  const processBatchOperations = async (operations: BatchOperation[]) => {
+    setBatchOperations(operations);
+    setCurrentBatchIndex(0);
+    setCompletedBatchOps(0);
+    setFailedBatchOps(0);
+    setShowBatchProgress(true);
+    batchCancelledRef.current = false;
+
+    for (let i = 0; i < operations.length; i++) {
+      if (batchCancelledRef.current) {
+        // Mark remaining operations as cancelled
+        setBatchOperations(prev => prev.map((op, index) => 
+          index >= i ? { ...op, status: 'cancelled' } : op
+        ));
+        break;
       }
-    },
-    onEnd: (event) => {
-      if (scale.value > 1) {
-        // Reset pan when zoomed
-        translateX.value = withSpring(0);
-        translateY.value = withSpring(0);
-      } else {
-        // Handle swipe navigation
-        const threshold = screenWidth * 0.3;
-        if (Math.abs(event.translationX) > threshold) {
-          if (event.translationX > 0) {
-            runOnJS(goToPrevious)();
-          } else {
-            runOnJS(goToNext)();
-          }
+
+      setCurrentBatchIndex(i);
+      const operation = operations[i];
+      
+      // Update operation status to processing
+      setBatchOperations(prev => prev.map((op, index) => 
+        index === i ? { ...op, status: 'processing' } : op
+      ));
+
+      try {
+        let result: PhotoOperationResult | null = null;
+
+        switch (operation.type) {
+          case 'move':
+            if (operation.targetAlbumId) {
+              result = await movePhoto(operation.photoId, operation.targetAlbumId);
+            }
+            break;
+          case 'copy':
+            if (operation.targetAlbumId) {
+              result = await copyPhoto(operation.photoId, operation.targetAlbumId);
+            }
+            break;
+          case 'delete':
+            result = await deletePhoto(operation.photoId);
+            break;
         }
-        photoTranslateX.value = withSpring(0);
+
+        if (result?.success) {
+          setBatchOperations(prev => prev.map((op, index) => 
+            index === i ? { ...op, status: 'completed' } : op
+          ));
+          setCompletedBatchOps(prev => prev + 1);
+        } else {
+          setBatchOperations(prev => prev.map((op, index) => 
+            index === i ? { 
+              ...op, 
+              status: 'failed', 
+              error: result?.error?.message || 'Operation failed' 
+            } : op
+          ));
+          setFailedBatchOps(prev => prev + 1);
+        }
+      } catch (error) {
+        setBatchOperations(prev => prev.map((op, index) => 
+          index === i ? { 
+            ...op, 
+            status: 'failed', 
+            error: error instanceof Error ? error.message : 'Unknown error' 
+          } : op
+        ));
+        setFailedBatchOps(prev => prev + 1);
       }
-      runOnJS(setShowControls)(true);
-    },
-  });
 
-  // Animated styles
-  const animatedImageStyle = useAnimatedStyle(() => ({
-    transform: [
-      { scale: scale.value },
-      { translateX: translateX.value },
-      { translateY: translateY.value },
-    ],
-  }));
+      // Small delay between operations to prevent overwhelming the system
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
 
-  const animatedContainerStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: photoTranslateX.value }],
-  }));
+    setCurrentBatchIndex(operations.length);
+  };
+
+  const handleCancelBatch = () => {
+    batchCancelledRef.current = true;
+    setShowBatchProgress(false);
+  };
+
+  const handleCompleteBatch = () => {
+    setShowBatchProgress(false);
+    setBatchOperations([]);
+  };
+
+  const handleRetryFailedBatch = async () => {
+    const failedOps = batchOperations.filter(op => op.status === 'failed');
+    if (failedOps.length > 0) {
+      const retryOps = failedOps.map(op => ({ ...op, status: 'pending' as const }));
+      await processBatchOperations(retryOps);
+    }
+  };
 
   return (
     <View style={styles.container}>
-      <StatusBar hidden />
+      <MobilePhotoViewer
+        photos={photos}
+        currentIndex={currentIndex}
+        onSwipe={handleSwipe}
+        onPhotoChange={handlePhotoChange}
+        onClose={handleClose}
+        screenDimensions={{
+          width: screenWidth,
+          height: screenHeight,
+        }}
+        showControls={showControls}
+        onToggleControls={handleToggleControls}
+      />
       
-      {showControls && (
-        <SafeAreaView style={styles.topControls}>
-          <TouchableOpacity style={styles.controlButton} onPress={handleClose}>
-            <Text style={styles.controlButtonText}>✕</Text>
-          </TouchableOpacity>
-          <View style={styles.photoInfo}>
-            <Text style={styles.photoTitle}>{currentPhoto.filename}</Text>
-            <Text style={styles.photoCounter}>
-              {currentIndex + 1} of {photos.length}
-            </Text>
-          </View>
-          <TouchableOpacity style={styles.controlButton} onPress={handleShare}>
-            <Text style={styles.controlButtonText}>⤴</Text>
-          </TouchableOpacity>
-        </SafeAreaView>
-      )}
+      <SwipeUndoBar
+        visible={showUndoBar}
+        swipeAction={lastSwipeAction}
+        photoName={photos[currentIndex]?.filename || 'Unknown'}
+        onUndo={handleUndo}
+        onTimeout={handleUndoTimeout}
+        timeout={settings.undoTimeout}
+      />
 
-      <Animated.View style={[styles.photoContainer, animatedContainerStyle]}>
-        <PinchGestureHandler
-          ref={pinchRef}
-          onGestureEvent={pinchGestureHandler}
-          simultaneousHandlers={panRef}
-        >
-          <Animated.View style={styles.gestureContainer}>
-            <PanGestureHandler
-              ref={panRef}
-              onGestureEvent={panGestureHandler}
-              simultaneousHandlers={pinchRef}
-            >
-              <Animated.View style={styles.gestureContainer}>
-                <TouchableOpacity
-                  style={styles.photoTouchable}
-                  onPress={toggleControls}
-                  activeOpacity={1}
-                >
-                  <Animated.Image
-                    source={{ uri: currentPhoto.uri }}
-                    style={[styles.photo, animatedImageStyle]}
-                    resizeMode="contain"
-                  />
-                </TouchableOpacity>
-              </Animated.View>
-            </PanGestureHandler>
-          </Animated.View>
-        </PinchGestureHandler>
-      </Animated.View>
+      <SwipeConfirmationBottomSheet
+        visible={showConfirmation}
+        photo={pendingSwipe?.photo || null}
+        swipeDirection={pendingSwipe?.direction || null}
+        swipeAction={pendingSwipe?.action || null}
+        onConfirm={handleConfirmSwipe}
+        onCancel={handleCancelSwipe}
+        hapticFeedbackEnabled={settings.hapticFeedback}
+      />
 
-      {showControls && (
-        <SafeAreaView style={styles.bottomControls}>
-          <View style={styles.navigationControls}>
-            <TouchableOpacity
-              style={[
-                styles.navButton,
-                currentIndex === 0 && styles.navButtonDisabled,
-              ]}
-              onPress={goToPrevious}
-              disabled={currentIndex === 0}
-            >
-              <Text style={styles.navButtonText}>‹</Text>
-            </TouchableOpacity>
-            
-            <View style={styles.actionButtons}>
-              <TouchableOpacity style={styles.actionButton} onPress={handleDelete}>
-                <Text style={styles.actionButtonText}>🗑</Text>
-              </TouchableOpacity>
-            </View>
-            
-            <TouchableOpacity
-              style={[
-                styles.navButton,
-                currentIndex === photos.length - 1 && styles.navButtonDisabled,
-              ]}
-              onPress={goToNext}
-              disabled={currentIndex === photos.length - 1}
-            >
-              <Text style={styles.navButtonText}>›</Text>
-            </TouchableOpacity>
-          </View>
-        </SafeAreaView>
-      )}
+      <BatchOperationProgress
+        visible={showBatchProgress}
+        operations={batchOperations}
+        currentOperationIndex={currentBatchIndex}
+        totalOperations={batchOperations.length}
+        completedOperations={completedBatchOps}
+        failedOperations={failedBatchOps}
+        onCancel={handleCancelBatch}
+        onComplete={handleCompleteBatch}
+        onRetryFailed={handleRetryFailedBatch}
+        hapticFeedbackEnabled={settings.hapticFeedback}
+      />
     </View>
   );
 };
@@ -262,114 +358,10 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000000',
   },
-  topControls: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    zIndex: 1000,
-  },
-  controlButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  controlButtonText: {
+  errorText: {
     color: '#ffffff',
     fontSize: 18,
-    fontWeight: 'bold',
-  },
-  photoInfo: {
-    flex: 1,
-    alignItems: 'center',
-    marginHorizontal: 16,
-  },
-  photoTitle: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
     textAlign: 'center',
-  },
-  photoCounter: {
-    color: '#cccccc',
-    fontSize: 14,
-    marginTop: 2,
-  },
-  photoContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  gestureContainer: {
-    flex: 1,
-    width: screenWidth,
-    height: screenHeight,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  photoTouchable: {
-    flex: 1,
-    width: '100%',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  photo: {
-    width: screenWidth,
-    height: screenHeight * 0.8,
-  },
-  bottomControls: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    zIndex: 1000,
-  },
-  navigationControls: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 16,
-  },
-  navButton: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  navButtonDisabled: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  navButtonText: {
-    color: '#ffffff',
-    fontSize: 24,
-    fontWeight: 'bold',
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  actionButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginHorizontal: 8,
-  },
-  actionButtonText: {
-    fontSize: 20,
+    marginTop: 100,
   },
 });

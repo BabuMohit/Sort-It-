@@ -66,8 +66,6 @@ describe('ThumbnailCacheService', () => {
       mockFileSystem.getInfoAsync.mockResolvedValueOnce({
         exists: false,
         isDirectory: false,
-        modificationTime: 0,
-        size: 0,
         uri: '',
       });
 
@@ -98,8 +96,6 @@ describe('ThumbnailCacheService', () => {
       mockFileSystem.getInfoAsync.mockResolvedValueOnce({
         exists: false,
         isDirectory: false,
-        modificationTime: 0,
-        size: 0,
         uri: '',
       });
       mockFileSystem.makeDirectoryAsync.mockRejectedValueOnce(new Error('Permission denied'));
@@ -348,8 +344,6 @@ describe('ThumbnailCacheService', () => {
       mockFileSystem.getInfoAsync.mockResolvedValueOnce({
         exists: false,
         isDirectory: false,
-        modificationTime: 0,
-        size: 0,
         uri: '',
       });
 

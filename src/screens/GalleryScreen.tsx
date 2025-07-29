@@ -12,6 +12,7 @@ import { useMobileAppStore } from '../store/mobileAppStore';
 import { Photo } from '../types';
 import { NavigationProps } from '../navigation/types';
 import { MobileGalleryGrid } from '../components/MobileGalleryGrid';
+import { PhotoErrorBoundary } from '../components/PhotoErrorBoundary';
 
 interface GalleryScreenProps extends NavigationProps {}
 
@@ -69,11 +70,14 @@ export const GalleryScreen: React.FC<GalleryScreenProps> = ({ navigation }) => {
   }, [loadPhotos]);
 
   const handlePhotoSelect = useCallback((photo: Photo, index: number) => {
+    // Get fresh photos from store to avoid stale closure
+    const currentPhotos = useMobileAppStore.getState().photos;
+    console.log(`GalleryScreen: Photo selected - ${photo.filename} at index ${index} of ${currentPhotos.length} photos`);
     navigation.navigate('PhotoViewer', {
-      photos,
+      photos: currentPhotos,
       currentIndex: index,
     });
-  }, [navigation, photos]);
+  }, [navigation]);
 
   const handleLoadMore = useCallback(async () => {
     // Implement pagination if needed in the future
@@ -114,18 +118,9 @@ export const GalleryScreen: React.FC<GalleryScreenProps> = ({ navigation }) => {
     );
   }
 
-  // Debug logging
-  console.log('GalleryScreen: Rendering with:', {
-    photosCount: photos.length,
-    loading,
-    error: error?.message,
-    permissions: permissions.mediaLibrary,
-    refreshing
-  });
-
-  // Show debug info in development
-  if (__DEV__) {
-    console.log('GalleryScreen: Photos array:', photos.slice(0, 3)); // Log first 3 photos
+  // Debug logging (reduced for cleaner console)
+  if (__DEV__ && error) {
+    console.log('GalleryScreen: Error:', error);
   }
 
   return (
@@ -147,19 +142,21 @@ export const GalleryScreen: React.FC<GalleryScreenProps> = ({ navigation }) => {
         </View>
       </View>
       
-      <MobileGalleryGrid
-        photos={photos}
-        columns={settings.gridColumns || 3}
-        onPhotoSelect={handlePhotoSelect}
-        onLoadMore={handleLoadMore}
-        onRefresh={handleRefresh}
+      <PhotoErrorBoundary>
+        <MobileGalleryGrid
+          photos={photos}
+          columns={settings.gridColumns || 3}
+          onPhotoSelect={handlePhotoSelect}
+          onLoadMore={handleLoadMore}
+          onRefresh={handleRefresh}
         loading={loading}
         refreshing={refreshing}
         showVideoIndicator={true}
         showPhotoCount={true}
         emptyStateComponent={renderEmptyState()}
         testID="gallery-grid"
-      />
+        />
+      </PhotoErrorBoundary>
     </SafeAreaView>
   );
 };
