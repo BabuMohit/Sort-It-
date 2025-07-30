@@ -118,9 +118,20 @@ describe('AndroidPhotoService', () => {
         });
 
       mockMediaLibrary.getAssetInfoAsync.mockResolvedValue({
+        id: "test",
+        filename: "test.jpg",
+        uri: "file://test.jpg",
+        mediaType: "photo",
+        width: 1920,
+        height: 1080,
+        creationTime: 1640995200000,
+        modificationTime: Date.now(),
+        duration: 0,
         localUri: 'file://local/photo1.jpg',
         location: { latitude: 40.7128, longitude: -74.0060 },
-        orientation: 0, creationTime: 1640995200000, });
+        orientation: 0,
+        exif: {}
+      } as any);
 
       mockFileSystem.getInfoAsync.mockResolvedValue({ exists: true, uri: "", size: 2048000, isDirectory: false, modificationTime: Date.now() });
 
@@ -186,8 +197,21 @@ describe('AndroidPhotoService', () => {
           totalCount: 0
         });
 
-      mockMediaLibrary.getAssetInfoAsync.mockResolvedValue({ id: "test", filename: "test.jpg", uri: "file://test.jpg", mediaType: "photo", width: 1920, height: 1080, creationTime: Date.now(), modificationTime: Date.now(), duration: 0, localUri: 'file://local/photo.jpg',
-        orientation: 0, creationTime: 1640995200000, } as any);
+      mockMediaLibrary.getAssetInfoAsync.mockResolvedValue({ 
+        id: "test", 
+        filename: "test.jpg", 
+        uri: "file://test.jpg", 
+        mediaType: "photo", 
+        width: 1920, 
+        height: 1080, 
+        creationTime: 1640995200000, 
+        modificationTime: Date.now(), 
+        duration: 0, 
+        localUri: 'file://local/photo.jpg',
+        orientation: 0,
+        location: undefined,
+        exif: {}
+      } as any);
 
       mockFileSystem.getInfoAsync.mockResolvedValue({ exists: true, uri: "", size: 1024000, isDirectory: false, modificationTime: Date.now() });
 
@@ -210,7 +234,9 @@ describe('AndroidPhotoService', () => {
       const mockAlbum = {
         id: 'album1',
         title: 'Camera',
-        assetCount: 10
+        assetCount: 10,
+        startTime: 0,
+        endTime: 0
       };
 
       mockMediaLibrary.getAlbumsAsync.mockResolvedValue([mockAlbum]);
@@ -315,7 +341,9 @@ describe('AndroidPhotoService', () => {
       const mockTargetMediaAlbum = {
         id: 'media_album2',
         title: 'Target Album',
-        assetCount: 0
+        assetCount: 0,
+        startTime: 0,
+        endTime: 0
       };
 
       mockMediaLibrary.getAlbumAsync.mockResolvedValue(mockTargetMediaAlbum);
@@ -447,8 +475,21 @@ describe('AndroidPhotoService', () => {
 
       (service as any).photoCache.set('photo1', mockPhoto);
 
-      mockMediaLibrary.getAssetInfoAsync.mockResolvedValue({ id: "test", filename: "test.jpg", uri: "file://test.jpg", mediaType: "photo", width: 1920, height: 1080, creationTime: Date.now(), modificationTime: Date.now(), duration: 0, localUri: 'file://local/test.jpg', creationTime: 1640995200000, duration: 0, orientation: 0
-       } as any);
+      mockMediaLibrary.getAssetInfoAsync.mockResolvedValue({ 
+        id: "test", 
+        filename: "test.jpg", 
+        uri: "file://test.jpg", 
+        mediaType: "photo", 
+        width: 1920, 
+        height: 1080, 
+        creationTime: 1640995200000, 
+        modificationTime: Date.now(), 
+        duration: 0, 
+        localUri: 'file://local/test.jpg', 
+        orientation: 0,
+        location: undefined,
+        exif: {}
+      } as any);
 
       const result = await service.getPhotoMetadata('photo1');
 
@@ -490,7 +531,9 @@ describe('AndroidPhotoService', () => {
       const existingAlbum = {
         id: 'album1',
         title: 'Existing Album',
-        assetCount: 5
+        assetCount: 5,
+        startTime: 0,
+        endTime: 0
       };
 
       mockMediaLibrary.requestPermissionsAsync.mockResolvedValue({

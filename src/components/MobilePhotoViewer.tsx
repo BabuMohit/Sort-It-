@@ -27,12 +27,18 @@ import Animated, {
   Extrapolate,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { Photo, SwipeDirection } from '../types';
+import { Photo } from '../types';
 import { SwipeIndicator } from './SwipeIndicator';
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
-
+export interface SwipeDirection {
+  type: 'left' | 'right' | 'up' | 'down';
+  albumId?: string;
+  action: 'move' | 'copy' | 'delete';
+  velocity: number;
+  distance: number;
+}
 
 export interface GestureConfig {
   minimumSwipeDistance: number;
@@ -41,7 +47,7 @@ export interface GestureConfig {
   animationDuration: number;
 }
 
-interface MobilePhotoViewerProps {
+export interface MobilePhotoViewerProps {
   photos: Photo[];
   currentIndex: number;
   onSwipe: (direction: SwipeDirection, photo: Photo) => void;
@@ -170,10 +176,6 @@ export const MobilePhotoViewer: React.FC<MobilePhotoViewerProps> = ({
       return null;
     }
 
-    const timestamp = Date.now();
-    const startPosition = { x: 0, y: 0 }; // Would be set from gesture start
-    const endPosition = { x: translationX, y: translationY };
-
     // Determine primary direction
     if (absX > absY) {
       // Horizontal swipe
@@ -183,9 +185,6 @@ export const MobilePhotoViewer: React.FC<MobilePhotoViewerProps> = ({
           action: 'move',
           velocity: velocityX,
           distance: translationX,
-          timestamp,
-          startPosition,
-          endPosition,
         };
       } else {
         return {
@@ -193,9 +192,6 @@ export const MobilePhotoViewer: React.FC<MobilePhotoViewerProps> = ({
           action: 'move',
           velocity: velocityX,
           distance: Math.abs(translationX),
-          timestamp,
-          startPosition,
-          endPosition,
         };
       }
     } else {
@@ -206,9 +202,6 @@ export const MobilePhotoViewer: React.FC<MobilePhotoViewerProps> = ({
           action: 'delete',
           velocity: velocityY,
           distance: translationY,
-          timestamp,
-          startPosition,
-          endPosition,
         };
       } else {
         return {
@@ -216,9 +209,6 @@ export const MobilePhotoViewer: React.FC<MobilePhotoViewerProps> = ({
           action: 'move',
           velocity: velocityY,
           distance: Math.abs(translationY),
-          timestamp,
-          startPosition,
-          endPosition,
         };
       }
     }
@@ -454,24 +444,10 @@ export const MobilePhotoViewer: React.FC<MobilePhotoViewerProps> = ({
 
       {/* Swipe Indicators */}
       <SwipeIndicator
-        direction="left"
-        progress={swipeIndicatorScale}
-        opacity={swipeIndicatorOpacity}
-      />
-      <SwipeIndicator
-        direction="right"
-        progress={swipeIndicatorScale}
-        opacity={swipeIndicatorOpacity}
-      />
-      <SwipeIndicator
-        direction="up"
-        progress={swipeIndicatorScale}
-        opacity={swipeIndicatorOpacity}
-      />
-      <SwipeIndicator
-        direction="down"
-        progress={swipeIndicatorScale}
-        opacity={swipeIndicatorOpacity}
+        translateX={translateX}
+        translateY={translateY}
+        screenWidth={screenWidth}
+        screenHeight={screenHeight}
       />
 
       {/* Bottom Controls */}

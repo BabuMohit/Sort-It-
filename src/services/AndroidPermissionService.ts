@@ -117,8 +117,11 @@ export class AndroidPermissionServiceImpl implements AndroidPermissionService {
    */
   async checkPermissionStatus(): Promise<PermissionStatus> {
     try {
+      console.log('AndroidPermissionService: Checking permission status...');
+      
       // Check media library permission status
       const mediaLibraryStatus = await MediaLibrary.getPermissionsAsync();
+      console.log('AndroidPermissionService: MediaLibrary status:', mediaLibraryStatus);
       
       const permissionStatus: PermissionStatus = {
         granted: mediaLibraryStatus.status === 'granted',
@@ -129,9 +132,10 @@ export class AndroidPermissionServiceImpl implements AndroidPermissionService {
       // Update cache
       this.permissionCache.set('mediaLibrary', permissionStatus);
 
+      console.log('AndroidPermissionService: Final permission status:', permissionStatus);
       return permissionStatus;
     } catch (error) {
-      console.error('Error checking permission status:', error);
+      console.error('AndroidPermissionService: Error checking permission status:', error);
       throw this.createPermissionError(
         'Failed to check permission status',
         error,
@@ -139,6 +143,8 @@ export class AndroidPermissionServiceImpl implements AndroidPermissionService {
       );
     }
   }
+
+
 
   /**
    * Open device settings for the app

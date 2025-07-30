@@ -13,6 +13,8 @@ export type RootStackParamList = {
   AlbumPhotos: {
     album: Album;
   };
+  SwipeConfiguration: undefined;
+  StorageManagement: undefined;
   Settings: undefined;
   PermissionOnboarding: undefined;
 };
@@ -65,13 +67,7 @@ export const LinkingConfiguration = {
   prefixes: ['sortit://'],
   config: {
     screens: {
-      MainTabs: {
-        screens: {
-          Gallery: 'gallery',
-          Albums: 'albums',
-          Settings: 'settings',
-        },
-      },
+      MainTabs: 'main',
       PhotoViewer: 'photo/:photoId',
       AlbumPhotos: 'album/:albumId',
     },

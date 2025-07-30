@@ -1,7 +1,7 @@
 import React, { Component, ReactNode } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 
-interface Props {
+export interface PhotoErrorBoundaryProps {
   children: ReactNode;
   fallback?: ReactNode;
   onError?: (error: Error, errorInfo: any) => void;
@@ -12,8 +12,8 @@ interface State {
   error?: Error;
 }
 
-export class PhotoErrorBoundary extends Component<Props, State> {
-  constructor(props: Props) {
+export class PhotoErrorBoundary extends Component<PhotoErrorBoundaryProps, State> {
+  constructor(props: PhotoErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false };
   }

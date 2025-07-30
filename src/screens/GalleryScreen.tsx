@@ -1,22 +1,18 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   StyleSheet,
-  FlatList,
-  Dimensions,
-  TouchableOpacity,
-  Image,
   Text,
-  RefreshControl,
   Alert,
+  TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useMobileAppStore } from '../store/mobileAppStore';
 import { Photo } from '../types';
 import { NavigationProps } from '../navigation/types';
-
-const { width: screenWidth } = Dimensions.get('window');
+import { MobileGalleryGrid } from '../components/MobileGalleryGrid';
+import { PhotoErrorBoundary } from '../components/PhotoErrorBoundary';
 
 interface GalleryScreenProps extends NavigationProps {}
 
@@ -32,27 +28,37 @@ export const GalleryScreen: React.FC<GalleryScreenProps> = ({ navigation }) => {
   } = useMobileAppStore();
 
   const [refreshing, setRefreshing] = useState(false);
-  const [gridColumns, setGridColumns] = useState(settings.gridColumns || 3);
 
   useEffect(() => {
     initializeGallery();
   }, []);
 
   const initializeGallery = async () => {
+    console.log('GalleryScreen: Initializing gallery...');
     try {
+      console.log('GalleryScreen: Current permissions state:', permissions);
+      console.log('GalleryScreen: Checking permissions...');
       const hasPermissions = await checkPermissions();
-      if (!hasPermissions) {
+      console.log('GalleryScreen: Permissions result:', hasPermissions);
+      
+      // Force load photos even if permission check says no, since Albums are working
+      console.log('GalleryScreen: Force loading photos...');
+      await loadPhotos();
+      console.log('GalleryScreen: Photos loaded successfully, count:', photos.length);
+      
+      // Only navigate to onboarding if we actually have no photos AND no permissions
+      if (!hasPermissions && photos.length === 0) {
+        console.log('GalleryScreen: No permissions and no photos, navigating to onboarding');
         navigation.navigate('PermissionOnboarding');
         return;
       }
-      await loadPhotos();
     } catch (err) {
-      console.error('Failed to initialize gallery:', err);
-      Alert.alert('Error', 'Failed to load photos. Please check permissions.');
+      console.error('GalleryScreen: Failed to initialize gallery:', err);
+      Alert.alert('Error', `Failed to load photos: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       await loadPhotos();
@@ -61,37 +67,22 @@ export const GalleryScreen: React.FC<GalleryScreenProps> = ({ navigation }) => {
     } finally {
       setRefreshing(false);
     }
-  };
+  }, [loadPhotos]);
 
-  const handlePhotoPress = (photo: Photo, index: number) => {
+  const handlePhotoSelect = useCallback((photo: Photo, index: number) => {
+    // Get fresh photos from store to avoid stale closure
+    const currentPhotos = useMobileAppStore.getState().photos;
+    console.log(`GalleryScreen: Photo selected - ${photo.filename} at index ${index} of ${currentPhotos.length} photos`);
     navigation.navigate('PhotoViewer', {
-      photos,
+      photos: currentPhotos,
       currentIndex: index,
     });
-  };
+  }, [navigation]);
 
-  const renderPhoto = ({ item: photo, index }: { item: Photo; index: number }) => {
-    const itemSize = (screenWidth - (gridColumns + 1) * 4) / gridColumns;
-
-    return (
-      <TouchableOpacity
-        style={[styles.photoItem, { width: itemSize, height: itemSize }]}
-        onPress={() => handlePhotoPress(photo, index)}
-        activeOpacity={0.8}
-      >
-        <Image
-          source={{ uri: photo.thumbnailUri || photo.uri }}
-          style={styles.photoImage}
-          resizeMode="cover"
-        />
-        {photo.mediaType === 'video' && (
-          <View style={styles.videoIndicator}>
-            <Text style={styles.videoIcon}>▶</Text>
-          </View>
-        )}
-      </TouchableOpacity>
-    );
-  };
+  const handleLoadMore = useCallback(async () => {
+    // Implement pagination if needed in the future
+    // For now, we load all photos at once
+  }, []);
 
   const renderEmptyState = () => (
     <View style={styles.emptyState}>
@@ -127,39 +118,45 @@ export const GalleryScreen: React.FC<GalleryScreenProps> = ({ navigation }) => {
     );
   }
 
+  // Debug logging (reduced for cleaner console)
+  if (__DEV__ && error) {
+    console.log('GalleryScreen: Error:', error);
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar style="dark" />
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Gallery</Text>
-        <Text style={styles.photoCount}>
-          {photos.length} {photos.length === 1 ? 'photo' : 'photos'}
-        </Text>
+        <View style={styles.headerButtons}>
+          <Text style={styles.photoCount}>{photos.length} photos</Text>
+          <TouchableOpacity 
+            style={styles.refreshButton} 
+            onPress={handleRefresh}
+            disabled={refreshing}
+          >
+            <Text style={styles.refreshButtonText}>
+              {refreshing ? 'Loading...' : 'Refresh'}
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
       
-      {photos.length === 0 ? (
-        renderEmptyState()
-      ) : (
-        <FlatList
-          data={photos}
-          renderItem={renderPhoto}
-          keyExtractor={(item) => item.id}
-          numColumns={gridColumns}
-          contentContainerStyle={styles.photoGrid}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
-          }
-          showsVerticalScrollIndicator={false}
-          getItemLayout={(data, index) => ({
-            length: (screenWidth - (gridColumns + 1) * 4) / gridColumns,
-            offset: ((screenWidth - (gridColumns + 1) * 4) / gridColumns) * Math.floor(index / gridColumns),
-            index,
-          })}
-          removeClippedSubviews={true}
-          maxToRenderPerBatch={20}
-          windowSize={10}
+      <PhotoErrorBoundary>
+        <MobileGalleryGrid
+          photos={photos}
+          columns={settings.gridColumns || 3}
+          onPhotoSelect={handlePhotoSelect}
+          onLoadMore={handleLoadMore}
+          onRefresh={handleRefresh}
+        loading={loading}
+        refreshing={refreshing}
+        showVideoIndicator={true}
+        showPhotoCount={true}
+        emptyStateComponent={renderEmptyState()}
+        testID="gallery-grid"
         />
-      )}
+      </PhotoErrorBoundary>
     </SafeAreaView>
   );
 };
@@ -175,45 +172,35 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#e0e0e0',
     backgroundColor: '#ffffff',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
     color: '#1a1a1a',
-    marginBottom: 4,
+  },
+  headerButtons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
   photoCount: {
     fontSize: 14,
     color: '#666666',
+    fontWeight: '500',
   },
-  photoGrid: {
-    padding: 2,
+  refreshButton: {
+    backgroundColor: '#007AFF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
   },
-  photoItem: {
-    margin: 2,
-    borderRadius: 8,
-    overflow: 'hidden',
-    backgroundColor: '#f5f5f5',
-  },
-  photoImage: {
-    width: '100%',
-    height: '100%',
-  },
-  videoIndicator: {
-    position: 'absolute',
-    bottom: 4,
-    right: 4,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    borderRadius: 12,
-    width: 24,
-    height: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  videoIcon: {
+  refreshButtonText: {
     color: '#ffffff',
-    fontSize: 10,
-    marginLeft: 2,
+    fontSize: 14,
+    fontWeight: '600',
   },
   emptyState: {
     flex: 1,

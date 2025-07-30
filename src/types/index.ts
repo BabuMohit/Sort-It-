@@ -324,8 +324,9 @@ export interface PhotoOperationResult {
   success: boolean;
   error?: MobileAppError;
   photoId: string;
-  operation: 'move' | 'copy' | 'delete';
+  operation: 'move' | 'copy' | 'delete' | 'undo';
   targetAlbumId?: string;
+  originalAlbumId?: string;
   undoAction?: () => Promise<void>;
 }
 
@@ -357,4 +358,5 @@ export interface MobileAppError {
   recoverable: boolean;
   userAction?: string;
   androidErrorCode?: number;
+  code?: string;
 }

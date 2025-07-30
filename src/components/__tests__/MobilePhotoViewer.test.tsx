@@ -1,7 +1,6 @@
 import React from 'react';
 import { render, fireEvent } from '@testing-library/react-native';
-import { MobilePhotoViewer } from '../MobilePhotoViewer';
-import { SwipeDirection } from '../../types';
+import { MobilePhotoViewer, SwipeDirection } from '../MobilePhotoViewer';
 import { Photo } from '../../types';
 
 // Mock all the complex dependencies
